@@ -2,6 +2,12 @@
 
 A lightweight Linux system management tool built with Tauri and React. Monitor resources, manage services, control repositories, and run custom scripts from a modern desktop interface.
 
+## Screenshots
+
+![Resources](screenshots/resources.png)
+![Services](screenshots/services.png)
+![Scripts](screenshots/scripts.png)
+
 ## Features
 
 ### System Monitoring
