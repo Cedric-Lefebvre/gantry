@@ -1,5 +1,8 @@
 mod modules;
 
+use tauri::Manager;
+use tauri::image::Image;
+
 use modules::{
   get_system_overview,
   get_resources,
@@ -70,6 +73,15 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      // Set window icon
+      if let Some(window) = app.get_webview_window("main") {
+        let icon_bytes = include_bytes!("../icons/icon.png");
+        if let Ok(icon) = Image::from_bytes(icon_bytes) {
+          let _ = window.set_icon(icon);
+        }
+      }
+
       Ok(())
     })
     .run(tauri::generate_context!())

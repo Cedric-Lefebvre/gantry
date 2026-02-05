@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Gantry",
-  "version": "0.1.0",
-  "identifier": "com.gantry.app",
+  "version": "0.1.1",
+  "identifier": "com.gantry.manager",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Gantry",
         "width": 1400,
         "height": 900,
@@ -32,8 +33,10 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": []
   }
 }
