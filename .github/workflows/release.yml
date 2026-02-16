@@ -51,6 +51,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: src-tauri
           tagName: ${{ github.ref_name || github.event.inputs.tag }}
           releaseName: "Gantry ${{ github.ref_name || github.event.inputs.tag }}"
           releaseBody: |
