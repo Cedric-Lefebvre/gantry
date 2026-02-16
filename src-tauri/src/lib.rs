@@ -4,86 +4,91 @@ use tauri::Manager;
 use tauri::image::Image;
 
 use modules::{
-  get_system_overview,
-  get_resources,
-  list_processes,
-  kill_process,
-  list_apt_repos,
-  list_startup_apps,
-  toggle_apt_repo,
-  list_devices,
-  list_usb_devices,
-  list_network_devices,
-  list_pci_devices,
-  write_log,
-  read_log_file,
-  clear_log_file,
-  list_scripts,
-  add_script,
-  remove_script,
-  update_script,
-  run_script,
-  list_services,
-  start_service,
-  stop_service,
-  restart_service,
-  enable_service,
-  disable_service,
-  get_settings,
-  set_theme,
+    get_system_overview,
+    get_resources,
+    list_processes,
+    kill_process,
+    kill_process_group,
+    get_processor_info,
+    list_apt_repos,
+    list_startup_apps,
+    toggle_apt_repo,
+    list_devices,
+    list_usb_devices,
+    list_network_devices,
+    list_pci_devices,
+    list_input_devices,
+    write_log,
+    read_log_file,
+    clear_log_file,
+    list_scripts,
+    add_script,
+    remove_script,
+    update_script,
+    run_script,
+    list_services,
+    start_service,
+    stop_service,
+    restart_service,
+    enable_service,
+    disable_service,
+    get_settings,
+    set_theme,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![
-      get_system_overview,
-      get_resources,
-      list_processes,
-      kill_process,
-      list_devices,
-      list_usb_devices,
-      list_network_devices,
-      list_pci_devices,
-      list_apt_repos,
-      list_startup_apps,
-      toggle_apt_repo,
-      write_log,
-      read_log_file,
-      clear_log_file,
-      list_scripts,
-      add_script,
-      remove_script,
-      update_script,
-      run_script,
-      list_services,
-      start_service,
-      stop_service,
-      restart_service,
-      enable_service,
-      disable_service,
-      get_settings,
-      set_theme,
-    ])
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            get_system_overview,
+            get_resources,
+            list_processes,
+            kill_process,
+            kill_process_group,
+            get_processor_info,
+            list_devices,
+            list_usb_devices,
+            list_network_devices,
+            list_pci_devices,
+            list_input_devices,
+            list_apt_repos,
+            list_startup_apps,
+            toggle_apt_repo,
+            write_log,
+            read_log_file,
+            clear_log_file,
+            list_scripts,
+            add_script,
+            remove_script,
+            update_script,
+            run_script,
+            list_services,
+            start_service,
+            stop_service,
+            restart_service,
+            enable_service,
+            disable_service,
+            get_settings,
+            set_theme,
+        ])
+        .setup(|app| {
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
 
-      // Set window icon
-      if let Some(window) = app.get_webview_window("main") {
-        let icon_bytes = include_bytes!("../icons/icon.png");
-        if let Ok(icon) = Image::from_bytes(icon_bytes) {
-          let _ = window.set_icon(icon);
-        }
-      }
+            if let Some(window) = app.get_webview_window("main") {
+                let icon_bytes = include_bytes!("../icons/icon.png");
+                if let Ok(icon) = Image::from_bytes(icon_bytes) {
+                    let _ = window.set_icon(icon);
+                }
+            }
 
-      Ok(())
-    })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

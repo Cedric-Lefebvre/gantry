@@ -1,170 +1,389 @@
 use serde_json::json;
-use sysinfo::{Disks, System};
+use sysinfo::{Disks, Networks, System};
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::process::Command;
+use std::fs;
 
-// Keep a persistent System instance for accurate CPU readings
 static SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
+static NETWORKS: OnceLock<Mutex<Networks>> = OnceLock::new();
 
 fn get_system() -> &'static Mutex<System> {
-  SYSTEM.get_or_init(|| {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    Mutex::new(sys)
-  })
+    SYSTEM.get_or_init(|| {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        Mutex::new(sys)
+    })
+}
+
+fn get_networks() -> &'static Mutex<Networks> {
+    NETWORKS.get_or_init(|| {
+        Mutex::new(Networks::new_with_refreshed_list())
+    })
 }
 
 #[tauri::command]
 pub fn get_system_overview() -> Result<serde_json::Value, String> {
-  let mut sys = get_system().lock().unwrap();
-  sys.refresh_all();
+    let mut sys = get_system().lock().unwrap();
+    sys.refresh_all();
 
-  let cpus: Vec<_> = sys
-    .cpus()
-    .iter()
-    .map(|p| json!({"name": p.name(), "usage": p.cpu_usage()}))
-    .collect();
+    let cpus: Vec<_> = sys
+        .cpus()
+        .iter()
+        .map(|p| json!({"name": p.name(), "usage": p.cpu_usage()}))
+        .collect();
 
-  let mem = json!({
-    "total": sys.total_memory(),
-    "used": sys.used_memory(),
-    "swap_total": sys.total_swap(),
-    "swap_used": sys.used_swap()
-  });
+    let mem = json!({
+        "total": sys.total_memory(),
+        "used": sys.used_memory(),
+        "swap_total": sys.total_swap(),
+        "swap_used": sys.used_swap()
+    });
 
-  Ok(json!({"cpus": cpus, "memory": mem}))
+    Ok(json!({"cpus": cpus, "memory": mem}))
+}
+
+fn get_gpu_name_from_pci(device_path: &std::path::Path) -> String {
+    if let Ok(uevent) = fs::read_to_string(device_path.join("uevent")) {
+        for line in uevent.lines() {
+            if line.starts_with("PCI_SLOT_NAME=") {
+                let slot = &line["PCI_SLOT_NAME=".len()..];
+                if let Ok(output) = Command::new("lspci").arg("-s").arg(slot).output() {
+                    let lspci_line = String::from_utf8_lossy(&output.stdout);
+                    if let Some(pos) = lspci_line.find(": ") {
+                        return lspci_line[pos + 2..].trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+    "GPU".to_string()
 }
 
 fn get_gpu_info() -> serde_json::Value {
-  // Try NVIDIA GPU first using nvidia-smi
-  if let Ok(output) = Command::new("nvidia-smi")
-    .args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"])
-    .output()
-  {
-    if output.status.success() {
-      let stdout = String::from_utf8_lossy(&output.stdout);
-      let mut gpus = Vec::new();
+    let mut gpus = Vec::new();
 
-      for line in stdout.lines() {
-        let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-        if parts.len() >= 5 {
-          let name = parts[0].to_string();
-          let usage: f32 = parts[1].parse().unwrap_or(0.0);
-          let memory_used: u64 = parts[2].parse::<u64>().unwrap_or(0) * 1024 * 1024; // Convert MB to bytes
-          let memory_total: u64 = parts[3].parse::<u64>().unwrap_or(0) * 1024 * 1024;
-          let temperature: f32 = parts[4].parse().unwrap_or(0.0);
-
-          gpus.push(json!({
-            "name": name,
-            "vendor": "NVIDIA",
-            "usage": usage,
-            "memory_used": memory_used,
-            "memory_total": memory_total,
-            "temperature": temperature,
-          }));
-        }
-      }
-
-      if !gpus.is_empty() {
-        return json!(gpus);
-      }
-    }
-  }
-
-  // Try AMD GPU using rocm-smi
-  if let Ok(output) = Command::new("rocm-smi")
-    .args(["--showuse", "--showmemuse", "--showtemp", "--json"])
-    .output()
-  {
-    if output.status.success() {
-      let stdout = String::from_utf8_lossy(&output.stdout);
-      if let Ok(data) = serde_json::from_str::<serde_json::Value>(&stdout) {
-        if let Some(cards) = data.as_object() {
-          let mut gpus = Vec::new();
-          for (card_id, info) in cards {
-            if card_id.starts_with("card") {
-              let name = info.get("Card series").and_then(|v| v.as_str()).unwrap_or("AMD GPU").to_string();
-              let usage: f32 = info.get("GPU use (%)").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-              let temp: f32 = info.get("Temperature (Sensor edge) (C)").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-
-              gpus.push(json!({
-                "name": name,
-                "vendor": "AMD",
-                "usage": usage,
-                "memory_used": 0,
-                "memory_total": 0,
-                "temperature": temp,
-              }));
+    // NVIDIA via nvidia-smi
+    if let Ok(output) = Command::new("nvidia-smi")
+        .args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                if parts.len() >= 5 {
+                    gpus.push(json!({
+                        "name": parts[0],
+                        "vendor": "NVIDIA",
+                        "usage": parts[1].parse::<f32>().ok(),
+                        "memory_used": parts[2].parse::<u64>().unwrap_or(0) * 1024 * 1024,
+                        "memory_total": parts[3].parse::<u64>().unwrap_or(0) * 1024 * 1024,
+                        "temperature": parts[4].parse::<f32>().ok(),
+                        "fan_speed": parts.get(5).and_then(|s| s.parse::<f32>().ok()),
+                    }));
+                }
             }
-          }
-          if !gpus.is_empty() {
-            return json!(gpus);
-          }
         }
-      }
     }
-  }
 
-  // Try Intel GPU using intel_gpu_top (requires root, so we'll skip actual usage)
-  // Just detect if Intel GPU exists
-  if let Ok(output) = Command::new("lspci").output() {
-    if output.status.success() {
-      let stdout = String::from_utf8_lossy(&output.stdout);
-      for line in stdout.lines() {
-        if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
-          if line.to_lowercase().contains("intel") {
-            // Extract GPU name
-            if let Some(name_start) = line.find(": ") {
-              let name = line[name_start + 2..].to_string();
-              return json!([{
-                "name": name,
+    // AMD via sysfs (works without rocm-smi)
+    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("card") || name.contains('-') {
+                continue;
+            }
+
+            let device_path = entry.path().join("device");
+            let vendor = fs::read_to_string(device_path.join("vendor"))
+                .unwrap_or_default().trim().to_string();
+            if vendor != "0x1002" {
+                continue;
+            }
+
+            let gpu_busy = fs::read_to_string(device_path.join("gpu_busy_percent"))
+                .ok().and_then(|s| s.trim().parse::<f32>().ok());
+            let vram_used = fs::read_to_string(device_path.join("mem_info_vram_used"))
+                .ok().and_then(|s| s.trim().parse::<u64>().ok());
+            let vram_total = fs::read_to_string(device_path.join("mem_info_vram_total"))
+                .ok().and_then(|s| s.trim().parse::<u64>().ok());
+
+            let mut temperature: Option<f32> = None;
+            let mut fan_rpm: Option<u32> = None;
+            let hwmon_path = device_path.join("hwmon");
+            if let Ok(hwmon_entries) = fs::read_dir(&hwmon_path) {
+                for hwmon_entry in hwmon_entries.flatten() {
+                    let hwmon_dir = hwmon_entry.path();
+                    if temperature.is_none() {
+                        if let Ok(t) = fs::read_to_string(hwmon_dir.join("temp1_input")) {
+                            temperature = t.trim().parse::<f64>().ok().map(|v| (v / 1000.0) as f32);
+                        }
+                    }
+                    if fan_rpm.is_none() {
+                        if let Ok(f) = fs::read_to_string(hwmon_dir.join("fan1_input")) {
+                            fan_rpm = f.trim().parse().ok();
+                        }
+                    }
+                }
+            }
+
+            let gpu_name = get_gpu_name_from_pci(&device_path);
+
+            gpus.push(json!({
+                "name": gpu_name,
+                "vendor": "AMD",
+                "usage": gpu_busy,
+                "memory_used": vram_used,
+                "memory_total": vram_total,
+                "temperature": temperature,
+                "fan_speed": fan_rpm.map(|r| r as f32),
+            }));
+        }
+    }
+
+    // Intel via sysfs
+    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("card") || name.contains('-') {
+                continue;
+            }
+            let device_path = entry.path().join("device");
+            let vendor = fs::read_to_string(device_path.join("vendor"))
+                .unwrap_or_default().trim().to_string();
+            if vendor != "0x8086" {
+                continue;
+            }
+            let gpu_name = get_gpu_name_from_pci(&device_path);
+            gpus.push(json!({
+                "name": gpu_name,
                 "vendor": "Intel",
                 "usage": null,
                 "memory_used": null,
                 "memory_total": null,
                 "temperature": null,
-              }]);
-            }
-          }
+                "fan_speed": null,
+            }));
         }
-      }
     }
-  }
 
-  json!(null)
+    if gpus.is_empty() {
+        json!(null)
+    } else {
+        json!(gpus)
+    }
+}
+
+fn get_cpu_temperatures() -> Vec<serde_json::Value> {
+    let mut temps = Vec::new();
+
+    let hwmon_base = "/sys/class/hwmon";
+    if let Ok(entries) = fs::read_dir(hwmon_base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
+
+            for i in 1..=32 {
+                let input_path = path.join(format!("temp{}_input", i));
+
+                if let Ok(raw_temp) = fs::read_to_string(&input_path) {
+                    let temp_mc: f64 = raw_temp.trim().parse().unwrap_or(0.0);
+                    let temp_c = temp_mc / 1000.0;
+
+                    if temp_c > 0.0 && temp_c < 150.0 {
+                        let label_path = path.join(format!("temp{}_label", i));
+                        let label = fs::read_to_string(&label_path)
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_else(|_| format!("{} Sensor {}", name, i));
+
+                        temps.push(json!({
+                            "label": label,
+                            "sensor": name,
+                            "celsius": (temp_c * 10.0).round() / 10.0,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    temps
+}
+
+fn get_fan_speeds() -> Vec<serde_json::Value> {
+    let mut fans = Vec::new();
+
+    let hwmon_base = "/sys/class/hwmon";
+    if let Ok(entries) = fs::read_dir(hwmon_base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
+
+            for i in 1..=8 {
+                let input_path = path.join(format!("fan{}_input", i));
+
+                if let Ok(raw_rpm) = fs::read_to_string(&input_path) {
+                    let rpm: u32 = raw_rpm.trim().parse().unwrap_or(0);
+                    let label_path = path.join(format!("fan{}_label", i));
+                    let label = fs::read_to_string(&label_path)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|_| format!("{} Fan {}", name, i));
+
+                    fans.push(json!({
+                        "label": label,
+                        "rpm": rpm,
+                    }));
+                }
+            }
+        }
+    }
+
+    fans
+}
+
+fn get_network_stats() -> serde_json::Value {
+    let mut nets = get_networks().lock().unwrap();
+    nets.refresh();
+
+    let mut stats = Vec::new();
+    for (name, data) in nets.iter() {
+        stats.push(json!({
+            "name": name,
+            "rx_bytes": data.total_received(),
+            "tx_bytes": data.total_transmitted(),
+        }));
+    }
+
+    json!(stats)
+}
+
+fn get_disk_io() -> Vec<serde_json::Value> {
+    let mut io_stats = Vec::new();
+
+    if let Ok(content) = fs::read_to_string("/proc/diskstats") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 14 {
+                let name = parts[2];
+                if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+                    continue;
+                }
+                if !std::path::Path::new(&format!("/sys/block/{}", name)).exists() {
+                    continue;
+                }
+                let reads: u64 = parts[5].parse().unwrap_or(0);
+                let writes: u64 = parts[9].parse().unwrap_or(0);
+                let read_bytes = reads * 512;
+                let write_bytes = writes * 512;
+                let io_ms: u64 = parts[12].parse().unwrap_or(0);
+
+                io_stats.push(json!({
+                    "name": name,
+                    "read_bytes": read_bytes,
+                    "write_bytes": write_bytes,
+                    "io_ms": io_ms,
+                }));
+            }
+        }
+    }
+
+    io_stats
+}
+
+fn get_load_average() -> (f64, f64, f64) {
+    if let Ok(content) = fs::read_to_string("/proc/loadavg") {
+        let parts: Vec<&str> = content.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let l1: f64 = parts[0].parse().unwrap_or(0.0);
+            let l5: f64 = parts[1].parse().unwrap_or(0.0);
+            let l15: f64 = parts[2].parse().unwrap_or(0.0);
+            return (l1, l5, l15);
+        }
+    }
+    (0.0, 0.0, 0.0)
+}
+
+fn get_uptime_seconds() -> u64 {
+    if let Ok(content) = fs::read_to_string("/proc/uptime") {
+        if let Some(secs_str) = content.split_whitespace().next() {
+            return secs_str.parse::<f64>().unwrap_or(0.0) as u64;
+        }
+    }
+    0
+}
+
+fn get_cpu_model() -> String {
+    if let Ok(content) = fs::read_to_string("/proc/cpuinfo") {
+        for line in content.lines() {
+            if line.starts_with("model name") {
+                if let Some(name) = line.split(':').nth(1) {
+                    return name.trim().to_string();
+                }
+            }
+        }
+    }
+    "Unknown".to_string()
 }
 
 #[tauri::command]
 pub fn get_resources() -> Result<serde_json::Value, String> {
-  let mut sys = get_system().lock().unwrap();
-  sys.refresh_cpu_all();
-  sys.refresh_memory();
+    let mut sys = get_system().lock().unwrap();
+    sys.refresh_cpu_all();
+    sys.refresh_memory();
 
-  let cpu_total: f32 = sys.cpus().iter().map(|p| p.cpu_usage()).sum();
-  let cpu_count = sys.cpus().len().max(1) as f32;
-  let cpu = cpu_total / cpu_count;
+    let cpu_total: f32 = sys.cpus().iter().map(|p| p.cpu_usage()).sum();
+    let cpu_count = sys.cpus().len().max(1) as f32;
+    let cpu = cpu_total / cpu_count;
 
-  let memory = json!({
-    "total": sys.total_memory(),
-    "used": sys.used_memory(),
-  });
+    let per_cpu: Vec<_> = sys.cpus().iter().map(|c| json!({
+        "name": c.name(),
+        "usage": c.cpu_usage(),
+        "frequency": c.frequency(),
+    })).collect();
 
-  // Get disk information
-  let disks = Disks::new_with_refreshed_list();
-  let disk_info: Vec<_> = disks
-    .iter()
-    .filter(|d| d.total_space() > 0)
-    .map(|d| json!({
-      "name": d.name().to_string_lossy(),
-      "mount_point": d.mount_point().to_string_lossy(),
-      "total_space": d.total_space(),
-      "available_space": d.available_space(),
+    let cpu_model = get_cpu_model();
+    let (load1, load5, load15) = get_load_average();
+    let uptime = get_uptime_seconds();
+
+    let memory = json!({
+        "total": sys.total_memory(),
+        "used": sys.used_memory(),
+        "swap_total": sys.total_swap(),
+        "swap_used": sys.used_swap(),
+    });
+
+    let disks = Disks::new_with_refreshed_list();
+    let disk_info: Vec<_> = disks
+        .iter()
+        .filter(|d| d.total_space() > 0)
+        .map(|d| json!({
+            "name": d.name().to_string_lossy(),
+            "mount_point": d.mount_point().to_string_lossy(),
+            "total_space": d.total_space(),
+            "available_space": d.available_space(),
+        }))
+        .collect();
+
+    let gpu = get_gpu_info();
+    let temperatures = get_cpu_temperatures();
+    let fans = get_fan_speeds();
+    let network = get_network_stats();
+    let disk_io = get_disk_io();
+
+    Ok(json!({
+        "cpu": cpu,
+        "cpu_count": sys.cpus().len(),
+        "cpu_model": cpu_model,
+        "per_cpu": per_cpu,
+        "load_avg": [load1, load5, load15],
+        "uptime": uptime,
+        "memory": memory,
+        "disks": disk_info,
+        "gpu": gpu,
+        "temperatures": temperatures,
+        "fans": fans,
+        "network": network,
+        "disk_io": disk_io,
     }))
-    .collect();
-
-  // Get GPU information
-  let gpu = get_gpu_info();
-
-  Ok(json!({"cpu": cpu, "memory": memory, "disks": disk_info, "gpu": gpu}))
 }

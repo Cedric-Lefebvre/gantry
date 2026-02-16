@@ -24,7 +24,6 @@ export default function Settings() {
       applyTheme(savedTheme)
     } catch (err) {
       console.error('Failed to load settings:', err)
-      // Fallback to localStorage
       const saved = localStorage.getItem('theme')
       const fallbackTheme = saved === 'dark' ? 'dark' : 'light'
       setTheme(fallbackTheme)
@@ -46,7 +45,6 @@ export default function Settings() {
     setTheme(newTheme)
     applyTheme(newTheme)
 
-    // Also keep localStorage as backup
     localStorage.setItem('theme', newTheme)
 
     try {
