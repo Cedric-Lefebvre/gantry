@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense, lazy } from 'react'
+import { useState, useEffect, Suspense, lazy, createElement } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import './index.css'
 import Layout from './components/Layout'
@@ -12,8 +12,8 @@ import Logs from './pages/Logs'
 import Scripts from './pages/Scripts'
 import { PageType } from './types'
 import { DEFAULT_PAGE } from './constants'
+import { ResourceMonitorContext, useResourceMonitorProvider } from './hooks/useResourceMonitor'
 
-// Lazy load Services to prevent blocking page navigation
 const Services = lazy(() => import('./pages/Services'))
 
 interface AppSettings {
@@ -23,6 +23,7 @@ interface AppSettings {
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>(DEFAULT_PAGE)
   const [themeLoaded, setThemeLoaded] = useState(false)
+  const monitorData = useResourceMonitorProvider()
 
   useEffect(() => {
     loadTheme()
@@ -33,7 +34,6 @@ function App() {
       const settings = await invoke<AppSettings>('get_settings')
       applyTheme(settings.theme)
     } catch (err) {
-      // Fallback to localStorage
       const saved = localStorage.getItem('theme')
       applyTheme(saved || 'light')
     } finally {
@@ -92,7 +92,6 @@ function App() {
     }
   }
 
-  // Don't render until theme is loaded to prevent flash
   if (!themeLoaded) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
@@ -102,9 +101,11 @@ function App() {
   }
 
   return (
-    <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
-      {renderPage()}
-    </Layout>
+    <ResourceMonitorContext.Provider value={monitorData}>
+      <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
+        {renderPage()}
+      </Layout>
+    </ResourceMonitorContext.Provider>
   )
 }
 

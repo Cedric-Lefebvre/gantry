@@ -1,18 +1,168 @@
-import React, { useEffect, useState } from 'react'
-import { listProcesses, killProcess } from '../api/processes'
-import { logger } from '../utils/logger'
-import { ChevronLeft, ChevronRight, Search, Trash2, X } from 'lucide-react'
-import { Process, ProcessStatus } from '../types'
-import { ITEMS_PER_PAGE } from '../constants'
+import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { ChevronDown, ChevronRight, ChevronLeft, Search, Trash2, X, Layers } from 'lucide-react'
+import { useResourceMonitor } from '../hooks/useResourceMonitor'
+
+interface ProcessEntry {
+  pid: number
+  parent_pid: number | null
+  name: string
+  exe: string
+  cpu: number
+  memory: number
+  status: string
+}
+
+interface ProcessGroup {
+  name: string
+  icon: string
+  total_cpu: number
+  total_memory: number
+  count: number
+  main_pid: number
+  processes: ProcessEntry[]
+}
+
+const ITEMS_PER_PAGE = 50
+
+const formatMemory = (bytes: number): string => {
+  const mb = bytes / 1024 / 1024
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB'
+  return mb.toFixed(1) + ' MB'
+}
+
+const formatCpu = (cpu: number): string => {
+  return cpu.toFixed(1) + '%'
+}
+
+const memoryColor = (bytes: number, totalMemory: number): string => {
+  if (totalMemory <= 0) return 'text-gray-500 dark:text-gray-400'
+  const pct = (bytes / totalMemory) * 100
+  if (pct >= 25) return 'text-red-500 font-medium'
+  if (pct >= 10) return 'text-orange-500 font-medium'
+  if (pct >= 5) return 'text-amber-500'
+  return 'text-gray-500 dark:text-gray-400'
+}
+
+function ProcessGroupRow({ group, onKillGroup, onKillProcess, totalMemory }: {
+  group: ProcessGroup
+  onKillGroup: (pids: number[]) => void
+  onKillProcess: (pid: number) => void
+  totalMemory: number
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [confirmKill, setConfirmKill] = useState<'group' | number | null>(null)
+
+  return (
+    <>
+      <tr
+        className="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <td className="p-2 w-8">
+          {group.count > 1 ? (
+            expanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />
+          ) : <div className="w-3.5" />}
+        </td>
+        <td className="p-2 text-gray-900 dark:text-gray-100 font-medium text-sm">
+          <div className="flex items-center gap-2">
+            {group.name}
+            {group.count > 1 && (
+              <span className="text-xs bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full">
+                {group.count}
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="p-2 text-right text-sm">
+          <span className={group.total_cpu > 50 ? 'text-red-500 font-medium' : group.total_cpu > 10 ? 'text-amber-500' : 'text-gray-500 dark:text-gray-400'}>
+            {formatCpu(group.total_cpu)}
+          </span>
+        </td>
+        <td className="p-2 text-right text-sm">
+          <span className={memoryColor(group.total_memory, totalMemory)}>
+            {formatMemory(group.total_memory)}
+          </span>
+        </td>
+        <td className="p-2 text-right">
+          {confirmKill === 'group' ? (
+            <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => { onKillGroup(group.processes.map(p => p.pid)); setConfirmKill(null) }}
+                className="px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600"
+              >
+                Kill All
+              </button>
+              <button
+                onClick={() => setConfirmKill(null)}
+                className="px-2 py-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmKill('group') }}
+              className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </td>
+      </tr>
+
+      {expanded && group.processes.map((proc) => (
+        <tr
+          key={proc.pid}
+          className="border-t border-gray-100 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50"
+        >
+          <td className="p-2" />
+          <td className="p-2 pl-6 text-sm">
+            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+              <span className="font-mono text-xs text-gray-400 dark:text-gray-500">{proc.pid}</span>
+              <span className="truncate max-w-xs">{proc.name}</span>
+            </div>
+          </td>
+          <td className="p-2 text-right text-xs text-gray-500 dark:text-gray-400">{formatCpu(proc.cpu)}</td>
+          <td className="p-2 text-right text-xs text-gray-500 dark:text-gray-400">{formatMemory(proc.memory)}</td>
+          <td className="p-2 text-right">
+            {confirmKill === proc.pid ? (
+              <div className="flex items-center justify-end gap-1">
+                <button
+                  onClick={() => { onKillProcess(proc.pid); setConfirmKill(null) }}
+                  className="px-2 py-0.5 bg-red-500 text-white text-xs rounded hover:bg-red-600"
+                >
+                  Kill
+                </button>
+                <button
+                  onClick={() => setConfirmKill(null)}
+                  className="px-2 py-0.5 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded"
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmKill(proc.pid)}
+                className="p-1 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-60 hover:opacity-100"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </td>
+        </tr>
+      ))}
+    </>
+  )
+}
 
 export default function Processes() {
-  const [processes, setProcesses] = useState<Process[]>([])
-  const [currentPage, setCurrentPage] = useState(1)
+  const { resources } = useResourceMonitor()
+  const totalMemory = resources?.memory?.total ?? 0
+  const [groups, setGroups] = useState<ProcessGroup[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [pendingDeletePid, setPendingDeletePid] = useState<number | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     fetchProcesses()
@@ -20,201 +170,153 @@ export default function Processes() {
 
   const fetchProcesses = async () => {
     try {
-      const data = await listProcesses()
-      
-      if (Array.isArray(data)) {
-        const sorted = [...data].sort((a, b) => (b.memory || 0) - (a.memory || 0))
-        setProcesses(sorted)
-      } else {
-        setProcesses([])
-      }
+      const data = await invoke<ProcessGroup[]>('list_processes')
+      setGroups(data || [])
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      logger.error('Failed to load processes', { error: errorMessage })
-      setError(errorMessage)
-      setProcesses([])
+      console.error('Failed to load processes:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDeleteProcess = async (pid: number) => {
-    setIsDeleting(true)
+  const handleKillProcess = async (pid: number) => {
     try {
-      await killProcess(pid)
+      await invoke('kill_process', { pid })
       await fetchProcesses()
-      setPendingDeletePid(null)
     } catch (err) {
-      logger.error('Failed to kill process', { pid, error: String(err) })
       alert(`Failed to kill process: ${err}`)
-    } finally {
-      setIsDeleting(false)
     }
   }
 
-  const filteredProcesses = processes.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    p.pid.toString().includes(searchQuery)
+  const handleKillGroup = async (pids: number[]) => {
+    try {
+      await invoke('kill_process_group', { pids })
+      await fetchProcesses()
+    } catch (err) {
+      alert(`Failed to kill processes: ${err}`)
+    }
+  }
+
+  const filteredGroups = groups.filter(g =>
+    g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    g.processes.some(p => p.pid.toString().includes(searchQuery))
   )
 
-  const resetSearch = () => {
-    setSearchQuery('')
+  const totalPages = Math.ceil(filteredGroups.length / ITEMS_PER_PAGE)
+  const paginatedGroups = filteredGroups.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  )
+
+  const totalProcessCount = groups.reduce((sum, g) => sum + g.count, 0)
+
+  useEffect(() => {
     setCurrentPage(1)
-  }
+  }, [searchQuery])
 
-  const formatProcessStatus = (status: ProcessStatus | undefined): string => {
-    if (!status) return '—'
-    if (typeof status === 'string') return status.substring(0, 10)
-    return JSON.stringify(status).substring(0, 10)
-  }
-
-  const formatMemoryMB = (bytes: number): string => {
-    return (bytes / 1024 / 1024).toFixed(1)
-  }
-
-  if (loading) return <div className="p-4 text-gray-900 dark:text-gray-100">Loading processes…</div>
-
-  if (error) {
+  if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-6">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Processes</h1>
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-          <div className="text-red-800 dark:text-red-300 font-semibold mb-2">Error Loading Processes</div>
-          <div className="text-red-700 dark:text-red-400 text-sm mb-4">{error}</div>
-          <div className="text-red-700 dark:text-red-400 text-sm bg-red-100 dark:bg-red-900/30 p-3 rounded">
-            <strong>Fix:</strong> Try running with elevated permissions:
-            <div className="font-mono mt-2 bg-white dark:bg-gray-800 p-2 rounded text-gray-900 dark:text-gray-100">sudo npm run tauri:dev</div>
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-16">
+          <div className="flex flex-col items-center justify-center gap-4">
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-gray-500 dark:text-gray-400">Loading processes...</p>
           </div>
         </div>
       </div>
     )
   }
 
-  const totalPages = Math.ceil(filteredProcesses.length / ITEMS_PER_PAGE)
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-  const paginatedProcesses = filteredProcesses.slice(startIndex, startIndex + ITEMS_PER_PAGE)
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Processes</h1>
-        <div className="text-sm text-gray-600 dark:text-gray-400">
-          {paginatedProcesses.length > 0
-            ? `${startIndex + 1}–${Math.min(startIndex + ITEMS_PER_PAGE, filteredProcesses.length)} of ${filteredProcesses.length}`
-            : `0 of ${filteredProcesses.length}`}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+            <Layers size={14} />
+            <span>{filteredGroups.length} apps</span>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
+            <span>{totalProcessCount} total</span>
+          </div>
+          <button
+            onClick={fetchProcesses}
+            className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+          >
+            Refresh
+          </button>
         </div>
       </div>
 
       <div className="relative">
-        <Search size={18} className="absolute left-3 top-3 text-gray-400 dark:text-gray-500" />
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           type="text"
-          placeholder="Search by process name or PID…"
+          placeholder="Search by app name or PID..."
           value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value)
-            setCurrentPage(1)
-          }}
-          className="w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         {searchQuery && (
           <button
-            onClick={resetSearch}
-            className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
           >
             <X size={18} />
           </button>
         )}
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-        {paginatedProcesses.length === 0 ? (
-          <div className="text-gray-600 dark:text-gray-400">No processes found</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                  <th className="p-2">PID</th>
-                  <th className="p-2">Name</th>
-                  <th className="p-2 text-right">CPU %</th>
-                  <th className="p-2 text-right">Memory (MB)</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2 text-right">Action</th>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-700">
+              <tr>
+                <th className="p-2 w-8" />
+                <th className="p-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100">Application</th>
+                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-24">CPU</th>
+                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-28">Memory</th>
+                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-24">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedGroups.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-gray-500 dark:text-gray-400">
+                    {searchQuery ? 'No processes match your search' : 'No processes found'}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {paginatedProcesses.map((p) => {
-                  const isConfirmingDelete = pendingDeletePid === p.pid
-
-                  return (
-                    <tr key={p.pid} className="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                      <td className="p-2 text-gray-900 dark:text-gray-100 font-mono text-sm">{p.pid}</td>
-                      <td className="p-2 text-gray-900 dark:text-gray-100 font-mono text-sm truncate max-w-xs" title={p.name}>
-                        {p.name}
-                      </td>
-                      <td className="p-2 text-gray-600 dark:text-gray-400 text-right">
-                        {typeof p.cpu === 'number' ? p.cpu.toFixed(1) : p.cpu}%
-                      </td>
-                      <td className="p-2 text-gray-600 dark:text-gray-400 text-right">
-                        {typeof p.memory === 'number' ? formatMemoryMB(p.memory) : p.memory}
-                      </td>
-                      <td className="p-2 text-gray-600 dark:text-gray-400 text-xs">
-                        {formatProcessStatus(p.status)}
-                      </td>
-                      <td className="p-2 text-right">
-                        {isConfirmingDelete ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleDeleteProcess(p.pid)}
-                              disabled={isDeleting}
-                              className="px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 disabled:opacity-50"
-                            >
-                              {isDeleting ? 'Killing…' : 'Confirm'}
-                            </button>
-                            <button
-                              onClick={() => setPendingDeletePid(null)}
-                              disabled={isDeleting}
-                              className="px-2 py-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded hover:bg-gray-400 dark:hover:bg-gray-500 disabled:opacity-50"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setPendingDeletePid(p.pid)}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded text-xs"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ) : (
+                paginatedGroups.map((group) => (
+                  <ProcessGroupRow
+                    key={group.name}
+                    group={group}
+                    onKillGroup={handleKillGroup}
+                    onKillProcess={handleKillProcess}
+                    totalMemory={totalMemory}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <button
-            onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
             disabled={currentPage === 1}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
           >
             <ChevronLeft size={16} />
             Previous
           </button>
-          <div className="text-sm text-gray-600 dark:text-gray-400">
-            Page {totalPages === 0 ? 0 : currentPage} of {totalPages}
-          </div>
+          <span className="text-sm text-gray-500 dark:text-gray-400">Page {currentPage} of {totalPages}</span>
           <button
-            onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-            disabled={currentPage === totalPages || totalPages === 0}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
           >
             Next
             <ChevronRight size={16} />
@@ -224,5 +326,3 @@ export default function Processes() {
     </div>
   )
 }
-
-

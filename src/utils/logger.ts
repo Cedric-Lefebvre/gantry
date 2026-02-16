@@ -1,7 +1,3 @@
-/**
- * Client-side logger that writes to localStorage AND a log file
- */
-
 import { writeLog as writeLogToFile } from '../api/logging'
 
 const LOG_KEY = 'gantry_logs'
@@ -31,7 +27,6 @@ function getLogs(): LogEntry[] {
 
 function saveLogs(logs: LogEntry[]): void {
   try {
-    // Keep only last MAX_LOGS entries
     const trimmed = logs.slice(-MAX_LOGS)
     localStorage.setItem(LOG_KEY, JSON.stringify(trimmed))
   } catch (e) {
@@ -59,21 +54,16 @@ function logMessage(level: LogLevel, message: string, data?: unknown): void {
   logs.push(entry)
   saveLogs(logs)
 
-  // Format log for file
   const dataStr = data !== undefined ? ` | ${safeStringify(data)}` : ''
   const fileLogMessage = `[${level.toUpperCase()}] ${message}${dataStr}`
 
-  // Also log to console
   const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'
   console[consoleMethod as 'log' | 'warn' | 'error'](
     `[${level.toUpperCase()}] ${message}`,
     data ?? ''
   )
 
-  // Write to file (async, don't wait)
-  writeLogToFile(fileLogMessage).catch(() => {
-    // Silently fail if file logging doesn't work
-  })
+  writeLogToFile(fileLogMessage).catch(() => {})
 }
 
 export const logger = {

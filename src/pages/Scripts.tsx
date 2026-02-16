@@ -102,7 +102,7 @@ export default function Scripts() {
         command: script.command,
         result,
         timestamp: new Date(),
-      }, ...prev].slice(0, 50)) // Keep last 50 logs
+      }, ...prev].slice(0, 50))
     } catch (err) {
       setExecutionLogs(prev => [{
         scriptName: script.name,
@@ -233,10 +233,8 @@ export default function Scripts() {
         </div>
       )}
 
-      {/* Terminal Output */}
       {executionLogs.length > 0 && (
         <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
-          {/* Terminal Header */}
           <div
             className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 cursor-pointer"
             onClick={() => setTerminalExpanded(!terminalExpanded)}
@@ -265,18 +263,15 @@ export default function Scripts() {
             </div>
           </div>
 
-          {/* Terminal Content */}
           {terminalExpanded && (
             <div className="max-h-80 overflow-y-auto p-4 font-mono text-sm">
               {executionLogs.map((log, index) => (
                 <div key={index} className="mb-4 last:mb-0">
-                  {/* Command line */}
                   <div className="flex items-start gap-2 mb-1">
                     <span className="text-green-400 select-none">$</span>
                     <span className="text-gray-300">{log.command}</span>
                   </div>
 
-                  {/* Timestamp and status */}
                   <div className="flex items-center gap-2 mb-2 ml-4">
                     <span className="text-gray-500 text-xs">
                       [{log.timestamp.toLocaleTimeString()}]
@@ -295,7 +290,6 @@ export default function Scripts() {
                     )}
                   </div>
 
-                  {/* Output */}
                   {log.result.stdout && (
                     <pre className="text-gray-300 whitespace-pre-wrap ml-4 mb-1">{log.result.stdout}</pre>
                   )}
@@ -303,7 +297,6 @@ export default function Scripts() {
                     <pre className="text-red-400 whitespace-pre-wrap ml-4">{log.result.stderr}</pre>
                   )}
 
-                  {/* Separator */}
                   {index < executionLogs.length - 1 && (
                     <div className="border-t border-gray-700 mt-4" />
                   )}
@@ -314,7 +307,6 @@ export default function Scripts() {
         </div>
       )}
 
-      {/* Add Script Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl">
@@ -389,7 +381,6 @@ export default function Scripts() {
         </div>
       )}
 
-      {/* Edit Script Modal */}
       {editingScript && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl">
