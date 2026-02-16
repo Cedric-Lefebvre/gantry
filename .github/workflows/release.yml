@@ -15,18 +15,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            target: linux
-          - os: macos-latest
-            target: macos-arm
-          - os: macos-13
-            target: macos-intel
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +35,6 @@ jobs:
           cache: pnpm
 
       - name: Install Linux dependencies
-        if: matrix.target == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
