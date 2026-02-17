@@ -50,8 +50,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_TARGET_DIR: target
         with:
-          projectPath: src-tauri
           tagName: ${{ github.ref_name || github.event.inputs.tag }}
           releaseName: "Gantry ${{ github.ref_name || github.event.inputs.tag }}"
           releaseBody: |
