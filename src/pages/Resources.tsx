@@ -82,11 +82,8 @@ const cleanTempLabel = (label: string, sensor: string, category: SensorCategory)
     const sensorMatch = lower.match(/sensor\s*(\d+)/i)
     if (sensorMatch) return `Sensor ${sensorMatch[1]}`
   }
-  if (category === 'memory') {
-    if (lower.includes('dimm') || label.match(/spd5118.*sensor/i)) return 'DIMM'
-    const sensorMatch = lower.match(/sensor\s*(\d+)/i)
-    if (sensorMatch) return `DIMM ${sensorMatch[1]}`
-  }
+  if (category === 'memory') return 'Temperature'
+  if (category === 'network') return 'Temperature'
   if (label.startsWith(sensor + ' ')) return label.slice(sensor.length + 1)
   return label
 }
@@ -266,11 +263,25 @@ export default function Resources() {
             </span>
           )}
           {resources?.load_avg && (
-            <span className="flex items-center gap-1.5">
+            <div className="relative group flex items-center gap-1.5 cursor-help">
               <Activity size={14} />
               <span className="text-gray-400">Load</span>
-              {resources.load_avg[0].toFixed(2)} / {resources.load_avg[1].toFixed(2)} / {resources.load_avg[2].toFixed(2)}
-            </span>
+              {resources.load_avg[0].toFixed(2)}
+              <div className="absolute right-0 top-full mt-2 w-64 p-3 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                <div className="font-medium mb-1">System Load Average</div>
+                Average number of processes waiting to run.
+                <div className="mt-1.5 font-mono text-gray-300 space-y-0.5">
+                  <div>1 min: {resources.load_avg[0].toFixed(2)}</div>
+                  <div>5 min: {resources.load_avg[1].toFixed(2)}</div>
+                  <div>15 min: {resources.load_avg[2].toFixed(2)}</div>
+                </div>
+                {resources.cpu_count > 0 && (
+                  <div className="mt-1.5 text-gray-300">
+                    With {resources.cpu_count} threads, values above {resources.cpu_count.toFixed(1)} indicate saturation.
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -482,30 +493,49 @@ export default function Resources() {
 
       {(() => {
         const hasTemps = resources?.temperatures && resources.temperatures.length > 0
-        const hasFans = resources?.fans && resources.fans.length > 0
-        const hasSensors = hasTemps || hasFans
+        const hasRawFans = resources?.fans && resources.fans.length > 0
+        const hasSensors = hasTemps || hasRawFans
 
-        const grouped: Record<SensorCategory, { temps: { label: string; celsius: number }[]; fans: { label: string; rpm: number }[] }> = {
-          cpu: { temps: [], fans: [] },
-          gpu: { temps: [], fans: [] },
-          storage: { temps: [], fans: [] },
-          memory: { temps: [], fans: [] },
-          network: { temps: [], fans: [] },
-          other: { temps: [], fans: [] },
+        type DeviceSensors = { deviceId: string; deviceName: string; temps: { label: string; celsius: number }[]; fans: { label: string; rpm: number }[] }
+        const grouped: Record<SensorCategory, DeviceSensors[]> = {
+          cpu: [], gpu: [], storage: [], memory: [], network: [], other: [],
         }
 
         resources?.temperatures?.forEach(t => {
           const cat = getSensorCategory(t.sensor)
-          grouped[cat].temps.push({ label: cleanTempLabel(t.label, t.sensor, cat), celsius: t.celsius })
+          let device = grouped[cat].find(d => d.deviceId === t.device_id)
+          if (!device) {
+            device = { deviceId: t.device_id, deviceName: t.device_name || '', temps: [], fans: [] }
+            grouped[cat].push(device)
+          }
+          device.temps.push({ label: cleanTempLabel(t.label, t.sensor, cat), celsius: t.celsius })
         })
-        resources?.fans?.forEach(f => {
+        resources?.fans?.filter(f => f.rpm > 0).forEach(f => {
           const cat = getSensorCategory(f.sensor)
-          grouped[cat].fans.push({ label: cleanFanLabel(f.label, f.sensor), rpm: f.rpm })
+          let device = grouped[cat].find(d => d.deviceId === f.device_id)
+          if (!device) {
+            device = { deviceId: f.device_id, deviceName: '', temps: [], fans: [] }
+            grouped[cat].push(device)
+          }
+          device.fans.push({ label: cleanFanLabel(f.label, f.sensor), rpm: f.rpm })
         })
 
         const activeCategories = (Object.keys(grouped) as SensorCategory[]).filter(
-          cat => grouped[cat].temps.length > 0 || grouped[cat].fans.length > 0
+          cat => grouped[cat].some(d => d.temps.length > 0 || d.fans.length > 0)
         )
+
+        const getDeviceLabel = (cat: SensorCategory, devices: DeviceSensors[], idx: number): string => {
+          const device = devices[idx]
+          if (device.deviceName) return device.deviceName
+          switch (cat) {
+            case 'storage': return `NVMe ${idx + 1}`
+            case 'memory': return `DIMM ${idx + 1}`
+            case 'gpu': return `GPU ${idx + 1}`
+            case 'cpu': return `CPU ${idx + 1}`
+            case 'network': return `Adapter ${idx + 1}`
+            default: return `Device ${idx + 1}`
+          }
+        }
 
         const toggleCategory = (cat: string) => {
           setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }))
@@ -532,12 +562,6 @@ export default function Resources() {
                       GPU {gpuTemp}°C
                     </span>
                   )}
-                  {resources?.fans && resources.fans.length > 0 && (
-                    <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                      <Fan size={14} className="text-blue-500" />
-                      {resources.fans[0].rpm} RPM
-                    </span>
-                  )}
                 </div>
               ) : (
                 <div className="ml-auto flex items-center gap-2 text-sm text-gray-400">
@@ -558,7 +582,9 @@ export default function Resources() {
                   const meta = CATEGORY_META[cat]
                   const Icon = meta.icon
                   const isExpanded = expandedCategories[cat] !== false
-                  const { temps, fans } = grouped[cat]
+                  const devices = grouped[cat]
+                  const allTemps = devices.flatMap(d => d.temps)
+                  const allFans = devices.flatMap(d => d.fans)
 
                   return (
                     <div key={cat} className={catIdx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : ''}>
@@ -570,37 +596,65 @@ export default function Resources() {
                         <Icon size={15} className={meta.color} />
                         <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{meta.label}</span>
                         <div className="flex gap-3 ml-auto text-xs font-mono">
-                          {temps.length > 0 && (
-                            <span className={tempColor(Math.max(...temps.map(t => t.celsius)))}>
-                              {Math.max(...temps.map(t => t.celsius))}°C
+                          {allTemps.length > 0 && (
+                            <span className={tempColor(Math.max(...allTemps.map(t => t.celsius)))}>
+                              {Math.max(...allTemps.map(t => t.celsius))}°C
                             </span>
                           )}
-                          {fans.length > 0 && (
+                          {allFans.length > 0 && (
                             <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1">
                               <Fan size={12} className="text-blue-500" />
-                              {fans[0].rpm} RPM
+                              {allFans[0].rpm} RPM
                             </span>
                           )}
                         </div>
                       </button>
                       {isExpanded && (
                         <div className="px-5 pb-3 pl-12">
-                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
-                            {temps.map((temp, i) => (
-                              <div key={`t${i}`} className="flex justify-between text-sm">
-                                <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
-                                <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
-                              </div>
-                            ))}
-                            {fans.map((fan, i) => (
-                              <div key={`f${i}`} className="flex justify-between text-sm">
-                                <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
-                                  <Fan size={12} className="text-blue-400" />{fan.label}
-                                </span>
-                                <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
-                              </div>
-                            ))}
-                          </div>
+                          {devices.length === 1 ? (
+                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
+                              {devices[0].temps.map((temp, i) => (
+                                <div key={`t${i}`} className="flex justify-between text-sm">
+                                  <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
+                                  <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                                </div>
+                              ))}
+                              {devices[0].fans.map((fan, i) => (
+                                <div key={`f${i}`} className="flex justify-between text-sm">
+                                  <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
+                                    <Fan size={12} className="text-blue-400" />{fan.label}
+                                  </span>
+                                  <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {devices.map((device, devIdx) => (
+                                <div key={device.deviceId}>
+                                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 truncate" title={getDeviceLabel(cat, devices, devIdx)}>
+                                    {getDeviceLabel(cat, devices, devIdx)}
+                                  </div>
+                                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
+                                    {device.temps.map((temp, i) => (
+                                      <div key={`t${i}`} className="flex justify-between text-sm">
+                                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
+                                        <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                                      </div>
+                                    ))}
+                                    {device.fans.map((fan, i) => (
+                                      <div key={`f${i}`} className="flex justify-between text-sm">
+                                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
+                                          <Fan size={12} className="text-blue-400" />{fan.label}
+                                        </span>
+                                        <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

@@ -21,12 +21,15 @@ interface GpuInfo {
 interface TempInfo {
   label: string
   sensor: string
+  device_id: string
+  device_name: string
   celsius: number
 }
 
 interface FanInfo {
   label: string
   sensor: string
+  device_id: string
   rpm: number
 }
 

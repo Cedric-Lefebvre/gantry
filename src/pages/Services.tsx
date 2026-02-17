@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronLeft, ChevronRight, User, Monitor, X } from 'lucide-react'
+import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, User, Monitor, X } from 'lucide-react'
 
 interface ServiceInfo {
   name: string
@@ -23,6 +23,8 @@ export default function Services() {
   const [error, setError] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [filterType, setFilterType] = useState<'all' | 'system' | 'user'>('all')
+  const [sortKey, setSortKey] = useState<'status' | 'type' | 'boot' | 'name' | 'description'>('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -65,6 +67,11 @@ export default function Services() {
     }
   }
 
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir(key === 'name' || key === 'description' ? 'asc' : 'desc') }
+  }
+
   const filteredServices = services
     .filter((service) => {
       if (filterType === 'system') return !service.is_user_service
@@ -76,6 +83,14 @@ export default function Services() {
         service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         service.description.toLowerCase().includes(searchQuery.toLowerCase())
     )
+    .sort((a, b) => {
+      const mul = sortDir === 'asc' ? 1 : -1
+      if (sortKey === 'status') return mul * (Number(a.is_running) - Number(b.is_running))
+      if (sortKey === 'type') return mul * (Number(a.is_user_service) - Number(b.is_user_service))
+      if (sortKey === 'boot') return mul * (Number(a.is_enabled) - Number(b.is_enabled))
+      if (sortKey === 'description') return mul * (a.description || '').localeCompare(b.description || '')
+      return mul * a.name.localeCompare(b.name)
+    })
 
   const totalPages = Math.ceil(filteredServices.length / ITEMS_PER_PAGE)
   const paginatedServices = filteredServices.slice(
@@ -177,12 +192,36 @@ export default function Services() {
             <table className="w-full">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="text-center px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-12"></th>
-                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-16">Type</th>
-                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-20">Boot</th>
+                  <th className="text-center px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-12 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('status')}>
+                    <div className="flex items-center justify-center gap-0.5">
+                      {sortKey === 'status' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                    </div>
+                  </th>
+                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-16 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('type')}>
+                    <div className="flex items-center gap-1">
+                      Type
+                      {sortKey === 'type' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                    </div>
+                  </th>
+                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-20 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('boot')}>
+                    <div className="flex items-center gap-1">
+                      Boot
+                      {sortKey === 'boot' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                    </div>
+                  </th>
                   <th className="text-center px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 w-24">Actions</th>
-                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Name</th>
-                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 hidden xl:table-cell">Description</th>
+                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('name')}>
+                    <div className="flex items-center gap-1">
+                      Name
+                      {sortKey === 'name' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                    </div>
+                  </th>
+                  <th className="text-left px-3 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100 hidden xl:table-cell cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('description')}>
+                    <div className="flex items-center gap-1">
+                      Description
+                      {sortKey === 'description' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">

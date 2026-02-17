@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { ChevronDown, ChevronRight, ChevronLeft, Search, Trash2, X, Layers } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronLeft, ChevronUp, Search, Trash2, X, Layers } from 'lucide-react'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
 
 interface ProcessEntry {
@@ -163,6 +163,8 @@ export default function Processes() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [sortKey, setSortKey] = useState<'name' | 'cpu' | 'memory'>('memory')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
     fetchProcesses()
@@ -197,10 +199,20 @@ export default function Processes() {
     }
   }
 
+  const toggleSort = (key: 'name' | 'cpu' | 'memory') => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc') }
+  }
+
   const filteredGroups = groups.filter(g =>
     g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     g.processes.some(p => p.pid.toString().includes(searchQuery))
-  )
+  ).sort((a, b) => {
+    const mul = sortDir === 'asc' ? 1 : -1
+    if (sortKey === 'name') return mul * a.name.localeCompare(b.name)
+    if (sortKey === 'cpu') return mul * (a.total_cpu - b.total_cpu)
+    return mul * (a.total_memory - b.total_memory)
+  })
 
   const totalPages = Math.ceil(filteredGroups.length / ITEMS_PER_PAGE)
   const paginatedGroups = filteredGroups.slice(
@@ -273,9 +285,24 @@ export default function Processes() {
             <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th className="p-2 w-8" />
-                <th className="p-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100">Application</th>
-                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-24">CPU</th>
-                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-28">Memory</th>
+                <th className="p-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('name')}>
+                  <div className="flex items-center gap-1">
+                    Application
+                    {sortKey === 'name' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                  </div>
+                </th>
+                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-24 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('cpu')}>
+                  <div className="flex items-center justify-end gap-1">
+                    CPU
+                    {sortKey === 'cpu' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                  </div>
+                </th>
+                <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-28 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors" onClick={() => toggleSort('memory')}>
+                  <div className="flex items-center justify-end gap-1">
+                    Memory
+                    {sortKey === 'memory' && (sortDir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                  </div>
+                </th>
                 <th className="p-2 text-right text-sm font-semibold text-gray-900 dark:text-gray-100 w-24">Action</th>
               </tr>
             </thead>

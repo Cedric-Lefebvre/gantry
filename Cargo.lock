@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "gantry"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

@@ -175,6 +175,31 @@ fn get_gpu_info() -> serde_json::Value {
     }
 }
 
+fn resolve_hwmon_device_name(hwmon_path: &std::path::Path, driver_name: &str) -> String {
+    if driver_name == "nvme" {
+        let path_str = fs::canonicalize(hwmon_path)
+            .or_else(|_| fs::canonicalize(hwmon_path.join("device")))
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        for part in path_str.split('/') {
+            if part.starts_with("nvme") && part.len() >= 5 {
+                let suffix = &part[4..];
+                if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+                    let model_path = format!("/sys/class/nvme/{}/model", part);
+                    if let Ok(model) = fs::read_to_string(model_path) {
+                        let m = model.trim();
+                        if !m.is_empty() {
+                            return m.to_string();
+                        }
+                    }
+                    return part.to_string();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 fn get_cpu_temperatures() -> Vec<serde_json::Value> {
     let mut temps = Vec::new();
 
@@ -183,6 +208,10 @@ fn get_cpu_temperatures() -> Vec<serde_json::Value> {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
+            let hwmon_id = path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let device_name = resolve_hwmon_device_name(&path, &name);
 
             for i in 1..=32 {
                 let input_path = path.join(format!("temp{}_input", i));
@@ -200,6 +229,8 @@ fn get_cpu_temperatures() -> Vec<serde_json::Value> {
                         temps.push(json!({
                             "label": label,
                             "sensor": name,
+                            "device_id": hwmon_id,
+                            "device_name": device_name,
                             "celsius": (temp_c * 10.0).round() / 10.0,
                         }));
                     }
@@ -219,6 +250,9 @@ fn get_fan_speeds() -> Vec<serde_json::Value> {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
+            let hwmon_id = path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
 
             for i in 1..=8 {
                 let input_path = path.join(format!("fan{}_input", i));
@@ -233,6 +267,7 @@ fn get_fan_speeds() -> Vec<serde_json::Value> {
                     fans.push(json!({
                         "label": label,
                         "sensor": name,
+                        "device_id": hwmon_id,
                         "rpm": rpm,
                     }));
                 }
