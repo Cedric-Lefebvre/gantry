@@ -9,7 +9,7 @@ interface SidebarProps {
 
 export default function Sidebar({ currentPage, onPageChange }: SidebarProps) {
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col border-r border-gray-800 shadow-lg">
+    <aside className="w-64 h-full bg-gray-900 text-white flex flex-col border-r border-gray-800 shadow-lg">
       <div className="p-6 border-b border-gray-800">
         <h1 className="text-2xl font-bold tracking-tight">{APP_NAME}</h1>
         <p className="text-gray-400 text-sm mt-1">{APP_SUBTITLE}</p>

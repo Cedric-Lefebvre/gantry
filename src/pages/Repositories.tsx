@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { RotateCw } from 'lucide-react'
+import { RotateCw, Plus, Trash2 } from 'lucide-react'
+import { addAptRepo, deleteAptRepo } from '../api/config'
 
 interface Repository {
   id: string
@@ -19,6 +20,9 @@ export default function Repositories() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [newRepoLine, setNewRepoLine] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
   useEffect(() => {
     fetchAptRepositories()
@@ -54,6 +58,30 @@ export default function Repositories() {
     }
   }
 
+  const handleAdd = async () => {
+    if (!newRepoLine.trim()) return
+    try {
+      setError(null)
+      await addAptRepo(newRepoLine.trim())
+      setShowAddModal(false)
+      setNewRepoLine('')
+      await fetchAptRepositories()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      setError(null)
+      await deleteAptRepo(id)
+      setDeleteConfirm(null)
+      await fetchAptRepositories()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
   const getEnabledRepositoryCount = (): number => {
     return repositories.filter((repo) => repo.enabled).length
   }
@@ -64,13 +92,22 @@ export default function Repositories() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">APT Repositories</h1>
-        <button
-          onClick={() => fetchAptRepositories()}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 rounded-lg transition-colors"
-        >
-          <RotateCw size={16} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setNewRepoLine(''); setShowAddModal(true) }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <Plus size={16} />
+            Add
+          </button>
+          <button
+            onClick={() => fetchAptRepositories()}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 rounded-lg transition-colors"
+          >
+            <RotateCw size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -123,6 +160,13 @@ export default function Repositories() {
                 >
                   {repo.enabled ? 'Enabled' : 'Disabled'}
                 </span>
+
+                <button
+                  onClick={() => setDeleteConfirm(repo.id)}
+                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-600 rounded transition-colors"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
             ))}
           </div>
@@ -134,6 +178,72 @@ export default function Repositories() {
           {getEnabledRepositoryCount()} of {repositories.length} repositories enabled
         </div>
       )}
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-lg mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">Add APT Repository</h2>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Repository Line</label>
+              <input
+                type="text"
+                value={newRepoLine}
+                onChange={e => setNewRepoLine(e.target.value)}
+                placeholder="deb http://example.com/repo focal main"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Enter a complete APT repository line starting with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb-src</code>
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAdd}
+                disabled={!newRepoLine.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              >
+                Add Repository
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteConfirm && (() => {
+        const repo = repositories.find(r => r.id === deleteConfirm)
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteConfirm(null)}>
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-sm mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">Delete Repository</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Are you sure you want to remove this repository?</p>
+              {repo && (
+                <p className="text-xs font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded p-2 mb-6 truncate">
+                  {repo.types} {repo.uris} {repo.suites}
+                </p>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDelete(deleteConfirm)}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

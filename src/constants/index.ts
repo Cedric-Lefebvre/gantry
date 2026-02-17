@@ -15,6 +15,6 @@ export const NAVIGATION_ITEMS: MenuItem[] = [
 
 export const DEFAULT_PAGE: PageType = 'resources'
 export const ITEMS_PER_PAGE = 100
-export const APP_VERSION = 'v0.1.0'
+export const APP_VERSION = `v${__APP_VERSION__}`
 export const APP_NAME = 'Gantry'
 export const APP_SUBTITLE = 'System Inspector'

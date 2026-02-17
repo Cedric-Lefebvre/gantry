@@ -302,6 +302,7 @@ pub fn list_startup_apps() -> Result<serde_json::Value, String> {
           if let Ok(s) = fs::read_to_string(e.path()) {
             let mut name = None;
             let mut exec = None;
+            let mut hidden = false;
             for line in s.lines() {
               if line.starts_with("Name=") {
                 name = Some(line.trim_start_matches("Name=").to_string());
@@ -309,12 +310,235 @@ pub fn list_startup_apps() -> Result<serde_json::Value, String> {
               if line.starts_with("Exec=") {
                 exec = Some(line.trim_start_matches("Exec=").to_string());
               }
+              if line.starts_with("Hidden=") {
+                hidden = line.trim_start_matches("Hidden=").trim().eq_ignore_ascii_case("true");
+              }
             }
-            apps.push(json!({"file": e.path().file_name().map(|n| n.to_string_lossy().to_string()), "name": name, "exec": exec}));
+            apps.push(json!({
+              "file": e.path().file_name().map(|n| n.to_string_lossy().to_string()),
+              "name": name,
+              "exec": exec,
+              "enabled": !hidden,
+              "file_path": e.path().to_string_lossy().to_string()
+            }));
           }
         }
       }
     }
   }
   Ok(json!(apps))
+}
+
+#[tauri::command]
+pub fn add_startup_app(name: String, exec: String) -> Result<serde_json::Value, String> {
+  let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+  let autostart = home.join(".config").join("autostart");
+  fs::create_dir_all(&autostart).map_err(|e| e.to_string())?;
+
+  let sanitized: String = name.to_lowercase().replace(' ', "-").chars()
+    .filter(|c| c.is_alphanumeric() || *c == '-')
+    .collect();
+  let mut filename = format!("{}.desktop", sanitized);
+  let mut filepath = autostart.join(&filename);
+
+  if filepath.exists() {
+    filename = format!("{}_{}.desktop", sanitized, chrono::Utc::now().timestamp_millis());
+    filepath = autostart.join(&filename);
+  }
+
+  let content = format!(
+    "[Desktop Entry]\nType=Application\nName={}\nExec={}\nHidden=false\n",
+    name, exec
+  );
+  fs::write(&filepath, content).map_err(|e| e.to_string())?;
+
+  Ok(json!({"success": true, "file": filename}))
+}
+
+#[tauri::command]
+pub fn edit_startup_app(file: String, name: String, exec: String) -> Result<serde_json::Value, String> {
+  let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+  let filepath = home.join(".config").join("autostart").join(&file);
+
+  if !filepath.exists() {
+    return Err("Desktop file not found".to_string());
+  }
+
+  let content = fs::read_to_string(&filepath).map_err(|e| e.to_string())?;
+  let new_content: String = content.lines().map(|line| {
+    if line.starts_with("Name=") {
+      format!("Name={}", name)
+    } else if line.starts_with("Exec=") {
+      format!("Exec={}", exec)
+    } else {
+      line.to_string()
+    }
+  }).collect::<Vec<_>>().join("\n");
+
+  fs::write(&filepath, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
+  Ok(json!({"success": true}))
+}
+
+#[tauri::command]
+pub fn delete_startup_app(file: String) -> Result<serde_json::Value, String> {
+  let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+  let filepath = home.join(".config").join("autostart").join(&file);
+
+  if !filepath.exists() {
+    return Err("Desktop file not found".to_string());
+  }
+
+  fs::remove_file(&filepath).map_err(|e| e.to_string())?;
+  Ok(json!({"success": true}))
+}
+
+#[tauri::command]
+pub fn toggle_startup_app(file: String, enabled: bool) -> Result<serde_json::Value, String> {
+  let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+  let filepath = home.join(".config").join("autostart").join(&file);
+
+  if !filepath.exists() {
+    return Err("Desktop file not found".to_string());
+  }
+
+  let content = fs::read_to_string(&filepath).map_err(|e| e.to_string())?;
+  let hidden_value = if enabled { "false" } else { "true" };
+  let mut found_hidden = false;
+
+  let new_lines: Vec<String> = content.lines().map(|line| {
+    if line.starts_with("Hidden=") {
+      found_hidden = true;
+      format!("Hidden={}", hidden_value)
+    } else {
+      line.to_string()
+    }
+  }).collect();
+
+  let mut new_content = new_lines.join("\n");
+  if !found_hidden {
+    new_content.push_str(&format!("\nHidden={}", hidden_value));
+  }
+
+  fs::write(&filepath, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
+  Ok(json!({"success": true}))
+}
+
+#[tauri::command]
+pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
+  let trimmed = repo_line.trim();
+  if !trimmed.starts_with("deb ") && !trimmed.starts_with("deb-src ") {
+    return Err("Repository line must start with 'deb' or 'deb-src'".to_string());
+  }
+
+  let parts: Vec<&str> = trimmed.split_whitespace().collect();
+  if parts.len() < 3 {
+    return Err("Invalid repository format. Expected: deb URI suite [components...]".to_string());
+  }
+
+  let uri = parts[1];
+  let sanitized: String = uri.replace("http://", "").replace("https://", "")
+    .replace('/', "-").replace('.', "-")
+    .chars().filter(|c| c.is_alphanumeric() || *c == '-')
+    .collect();
+
+  let mut filename = format!("{}.list", sanitized);
+  let mut target = PathBuf::from("/etc/apt/sources.list.d").join(&filename);
+
+  if target.exists() {
+    filename = format!("{}_{}.list", sanitized, chrono::Utc::now().timestamp_millis());
+    target = PathBuf::from("/etc/apt/sources.list.d").join(&filename);
+  }
+
+  let content = format!("{}\n", trimmed);
+  let temp_file = std::env::temp_dir().join("apt_repo_add_temp");
+  fs::write(&temp_file, &content).map_err(|e| e.to_string())?;
+
+  let output = Command::new("pkexec")
+    .args(["cp", &temp_file.to_string_lossy(), &target.to_string_lossy()])
+    .output()
+    .map_err(|e| e.to_string())?;
+
+  let _ = fs::remove_file(&temp_file);
+
+  if output.status.success() {
+    Ok(json!({"success": true, "file": filename}))
+  } else {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!("Failed to add repository: {}", stderr))
+  }
+}
+
+#[tauri::command]
+pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
+  let parts: Vec<&str> = id.rsplitn(2, ':').collect();
+  if parts.len() != 2 {
+    return Err("Invalid repository ID".to_string());
+  }
+
+  let line_number: usize = parts[0].parse().map_err(|_| "Invalid line number".to_string())?;
+  let file_path = parts[1];
+  let path = PathBuf::from(file_path);
+
+  if !path.exists() {
+    return Err("Repository file not found".to_string());
+  }
+
+  let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+  let lines: Vec<&str> = content.lines().collect();
+  let is_deb822 = path.extension().map_or(false, |ext| ext == "sources");
+
+  let new_lines: Vec<&str> = if is_deb822 {
+    let mut result: Vec<&str> = Vec::new();
+    let mut skip = false;
+    for (idx, line) in lines.iter().enumerate() {
+      if idx == line_number {
+        skip = true;
+        continue;
+      }
+      if skip {
+        if line.trim().is_empty() {
+          skip = false;
+          continue;
+        }
+        continue;
+      }
+      result.push(line);
+    }
+    result
+  } else {
+    lines.iter().enumerate()
+      .filter(|(idx, _)| *idx != line_number)
+      .map(|(_, line)| *line)
+      .collect()
+  };
+
+  let new_content = new_lines.join("\n");
+
+  if new_content.trim().is_empty() {
+    let output = Command::new("pkexec")
+      .args(["rm", file_path])
+      .output()
+      .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      return Err(format!("Failed to delete repository file: {}", stderr));
+    }
+  } else {
+    let temp_file = std::env::temp_dir().join("apt_repo_del_temp");
+    fs::write(&temp_file, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
+
+    let output = Command::new("pkexec")
+      .args(["cp", &temp_file.to_string_lossy(), file_path])
+      .output()
+      .map_err(|e| e.to_string())?;
+
+    let _ = fs::remove_file(&temp_file);
+
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      return Err(format!("Failed to update repository file: {}", stderr));
+    }
+  }
+
+  Ok(json!({"success": true}))
 }
