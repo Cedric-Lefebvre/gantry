@@ -26,6 +26,7 @@ interface TempInfo {
 
 interface FanInfo {
   label: string
+  sensor: string
   rpm: number
 }
 

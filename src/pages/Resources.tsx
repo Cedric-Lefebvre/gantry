@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import SpeedometerGauge from '../components/SpeedometerGauge'
-import { Thermometer, Fan, ArrowDown, ArrowUp, HardDrive, ChevronDown, ChevronRight, Network, Clock, Activity, X } from 'lucide-react'
+import { Thermometer, Fan, ArrowDown, ArrowUp, HardDrive, ChevronDown, ChevronRight, Network, Clock, Activity, X, Cpu, Monitor, MemoryStick, Wifi, Info } from 'lucide-react'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
 import type { NetworkRate, DiskIoRate } from '../hooks/useResourceMonitor'
 
@@ -29,6 +29,71 @@ const tempColor = (celsius: number): string => {
   if (celsius >= 90) return 'text-red-500'
   if (celsius >= 70) return 'text-amber-500'
   return 'text-green-500'
+}
+
+type SensorCategory = 'cpu' | 'gpu' | 'storage' | 'memory' | 'network' | 'other'
+
+const SENSOR_CATEGORIES: Record<string, SensorCategory> = {
+  k10temp: 'cpu',
+  coretemp: 'cpu',
+  zenpower: 'cpu',
+  amdgpu: 'gpu',
+  nouveau: 'gpu',
+  radeon: 'gpu',
+  nvme: 'storage',
+  drivetemp: 'storage',
+  spd5118: 'memory',
+  jc42: 'memory',
+}
+
+const CATEGORY_META: Record<SensorCategory, { label: string; icon: typeof Cpu; color: string }> = {
+  cpu: { label: 'CPU', icon: Cpu, color: 'text-blue-500' },
+  gpu: { label: 'GPU', icon: Monitor, color: 'text-emerald-500' },
+  storage: { label: 'Storage', icon: HardDrive, color: 'text-purple-500' },
+  memory: { label: 'Memory', icon: MemoryStick, color: 'text-amber-500' },
+  network: { label: 'Network', icon: Wifi, color: 'text-green-500' },
+  other: { label: 'Other', icon: Thermometer, color: 'text-gray-500' },
+}
+
+const getSensorCategory = (sensor: string): SensorCategory => {
+  if (SENSOR_CATEGORIES[sensor]) return SENSOR_CATEGORIES[sensor]
+  if (sensor.startsWith('nvme')) return 'storage'
+  if (sensor.includes('wifi') || sensor.includes('phy') || sensor.includes('iwl') || sensor.startsWith('mt7')) return 'network'
+  return 'other'
+}
+
+const cleanTempLabel = (label: string, sensor: string, category: SensorCategory): string => {
+  const lower = label.toLowerCase()
+  if (category === 'cpu') {
+    if (lower === 'tctl' || lower === 'tdie') return 'Package'
+    const ccdMatch = lower.match(/tccd(\d+)/)
+    if (ccdMatch) return `CCD ${parseInt(ccdMatch[1]) + 1}`
+    if (lower.includes('package')) return 'Package'
+    const coreMatch = lower.match(/core\s*(\d+)/i)
+    if (coreMatch) return `Core ${coreMatch[1]}`
+  }
+  if (category === 'gpu') {
+    if (lower === 'edge') return 'Edge'
+    if (lower === 'junction') return 'Junction'
+    if (lower === 'mem') return 'Memory'
+  }
+  if (category === 'storage') {
+    if (lower === 'composite') return 'Drive'
+    const sensorMatch = lower.match(/sensor\s*(\d+)/i)
+    if (sensorMatch) return `Sensor ${sensorMatch[1]}`
+  }
+  if (category === 'memory') {
+    if (lower.includes('dimm') || label.match(/spd5118.*sensor/i)) return 'DIMM'
+    const sensorMatch = lower.match(/sensor\s*(\d+)/i)
+    if (sensorMatch) return `DIMM ${sensorMatch[1]}`
+  }
+  if (label.startsWith(sensor + ' ')) return label.slice(sensor.length + 1)
+  return label
+}
+
+const cleanFanLabel = (label: string, sensor: string): string => {
+  if (label.startsWith(sensor + ' ')) return label.slice(sensor.length + 1)
+  return label
 }
 
 const isUserFacingInterface = (name: string): boolean => {
@@ -157,6 +222,7 @@ export default function Resources() {
     networkRates, networkHistory, diskIoRates, diskIoHistory,
   } = useResourceMonitor()
   const [thermalExpanded, setThermalExpanded] = useState(false)
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({})
   const [coresExpanded, setCoresExpanded] = useState(false)
   const [igpuExpanded, setIgpuExpanded] = useState(false)
   const [detailModal, setDetailModal] = useState<'cpu' | 'memory' | 'gpu' | null>(null)
@@ -414,66 +480,146 @@ export default function Resources() {
         )
       })()}
 
-      {((resources?.temperatures && resources.temperatures.length > 0) || (resources?.fans && resources.fans.length > 0)) && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <button
-            onClick={() => setThermalExpanded(!thermalExpanded)}
-            className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-          >
-            {thermalExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
-            <Thermometer size={18} className="text-red-500" />
-            <span className="font-semibold text-gray-900 dark:text-gray-100">Thermal</span>
-            <div className="flex gap-4 ml-auto text-sm">
-              {cpuPackageTemp && (
-                <span className={`font-mono font-medium ${tempColor(cpuPackageTemp.celsius)}`}>
-                  CPU {cpuPackageTemp.celsius}°C
-                </span>
-              )}
-              {gpuTemp !== null && gpuTemp !== undefined && (
-                <span className={`font-mono font-medium ${tempColor(gpuTemp)}`}>
-                  GPU {gpuTemp}°C
-                </span>
-              )}
-              {resources?.fans && resources.fans.length > 0 && (
-                <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                  <Fan size={14} className="text-blue-500" />
-                  {resources.fans[0].rpm} RPM
-                </span>
-              )}
-            </div>
-          </button>
-          {thermalExpanded && (
-            <div className="border-t border-gray-200 dark:border-gray-700 px-5 py-4">
-              {resources?.temperatures && resources.temperatures.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Sensors</h4>
-                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
-                    {resources.temperatures.map((temp, i) => (
-                      <div key={i} className="flex justify-between text-sm">
-                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
-                        <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
-                      </div>
-                    ))}
+      {(() => {
+        const hasTemps = resources?.temperatures && resources.temperatures.length > 0
+        const hasFans = resources?.fans && resources.fans.length > 0
+        const hasSensors = hasTemps || hasFans
+
+        const grouped: Record<SensorCategory, { temps: { label: string; celsius: number }[]; fans: { label: string; rpm: number }[] }> = {
+          cpu: { temps: [], fans: [] },
+          gpu: { temps: [], fans: [] },
+          storage: { temps: [], fans: [] },
+          memory: { temps: [], fans: [] },
+          network: { temps: [], fans: [] },
+          other: { temps: [], fans: [] },
+        }
+
+        resources?.temperatures?.forEach(t => {
+          const cat = getSensorCategory(t.sensor)
+          grouped[cat].temps.push({ label: cleanTempLabel(t.label, t.sensor, cat), celsius: t.celsius })
+        })
+        resources?.fans?.forEach(f => {
+          const cat = getSensorCategory(f.sensor)
+          grouped[cat].fans.push({ label: cleanFanLabel(f.label, f.sensor), rpm: f.rpm })
+        })
+
+        const activeCategories = (Object.keys(grouped) as SensorCategory[]).filter(
+          cat => grouped[cat].temps.length > 0 || grouped[cat].fans.length > 0
+        )
+
+        const toggleCategory = (cat: string) => {
+          setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }))
+        }
+
+        return (
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <button
+              onClick={() => setThermalExpanded(!thermalExpanded)}
+              className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+            >
+              {thermalExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+              <Thermometer size={18} className="text-red-500" />
+              <span className="font-semibold text-gray-900 dark:text-gray-100">Thermal</span>
+              {hasSensors ? (
+                <div className="flex gap-4 ml-auto text-sm">
+                  {cpuPackageTemp && (
+                    <span className={`font-mono font-medium ${tempColor(cpuPackageTemp.celsius)}`}>
+                      CPU {cpuPackageTemp.celsius}°C
+                    </span>
+                  )}
+                  {gpuTemp !== null && gpuTemp !== undefined && (
+                    <span className={`font-mono font-medium ${tempColor(gpuTemp)}`}>
+                      GPU {gpuTemp}°C
+                    </span>
+                  )}
+                  {resources?.fans && resources.fans.length > 0 && (
+                    <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                      <Fan size={14} className="text-blue-500" />
+                      {resources.fans[0].rpm} RPM
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="ml-auto flex items-center gap-2 text-sm text-gray-400">
+                  <span>No sensors detected</span>
+                  <div className="relative group">
+                    <Info size={14} className="text-gray-400 hover:text-blue-500 cursor-help" />
+                    <div className="absolute right-0 bottom-full mb-2 w-64 p-3 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                      Install <span className="font-mono bg-gray-700 dark:bg-gray-600 px-1 rounded">lm-sensors</span> to enable hardware monitoring:
+                      <div className="font-mono mt-1.5 bg-gray-800 dark:bg-gray-600 p-1.5 rounded">sudo apt install lm-sensors<br/>sudo sensors-detect</div>
+                    </div>
                   </div>
                 </div>
               )}
-              {resources?.fans && resources.fans.length > 0 && (
-                <div className={resources?.temperatures?.length ? 'mt-4 pt-4 border-t border-gray-100 dark:border-gray-700' : ''}>
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Fans</h4>
-                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
-                    {resources.fans.map((fan, i) => (
-                      <div key={i} className="flex justify-between text-sm">
-                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{fan.label}</span>
-                        <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+            </button>
+            {thermalExpanded && hasSensors && (
+              <div className="border-t border-gray-200 dark:border-gray-700">
+                {activeCategories.map((cat, catIdx) => {
+                  const meta = CATEGORY_META[cat]
+                  const Icon = meta.icon
+                  const isExpanded = expandedCategories[cat] !== false
+                  const { temps, fans } = grouped[cat]
+
+                  return (
+                    <div key={cat} className={catIdx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : ''}>
+                      <button
+                        onClick={() => toggleCategory(cat)}
+                        className="w-full flex items-center gap-2.5 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
+                      >
+                        {isExpanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+                        <Icon size={15} className={meta.color} />
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{meta.label}</span>
+                        <div className="flex gap-3 ml-auto text-xs font-mono">
+                          {temps.length > 0 && (
+                            <span className={tempColor(Math.max(...temps.map(t => t.celsius)))}>
+                              {Math.max(...temps.map(t => t.celsius))}°C
+                            </span>
+                          )}
+                          {fans.length > 0 && (
+                            <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                              <Fan size={12} className="text-blue-500" />
+                              {fans[0].rpm} RPM
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {isExpanded && (
+                        <div className="px-5 pb-3 pl-12">
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
+                            {temps.map((temp, i) => (
+                              <div key={`t${i}`} className="flex justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
+                                <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                              </div>
+                            ))}
+                            {fans.map((fan, i) => (
+                              <div key={`f${i}`} className="flex justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
+                                  <Fan size={12} className="text-blue-400" />{fan.label}
+                                </span>
+                                <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {thermalExpanded && !hasSensors && (
+              <div className="border-t border-gray-200 dark:border-gray-700 px-5 py-6 text-center">
+                <Info size={24} className="text-gray-300 dark:text-gray-600 mx-auto mb-2" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">No temperature sensors detected.</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  Install <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">lm-sensors</span> and run <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo sensors-detect</span> to enable hardware monitoring.
+                </p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">

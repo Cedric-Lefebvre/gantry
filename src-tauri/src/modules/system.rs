@@ -232,6 +232,7 @@ fn get_fan_speeds() -> Vec<serde_json::Value> {
 
                     fans.push(json!({
                         "label": label,
+                        "sensor": name,
                         "rpm": rpm,
                     }));
                 }
