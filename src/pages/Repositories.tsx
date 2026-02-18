@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { RotateCw, Plus, Trash2 } from 'lucide-react'
+import { RotateCw, Plus, Trash2, Search } from 'lucide-react'
 import { addAptRepo, deleteAptRepo } from '../api/config'
 
 interface Repository {
@@ -20,6 +20,7 @@ export default function Repositories() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [newRepoLine, setNewRepoLine] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
@@ -82,6 +83,16 @@ export default function Repositories() {
     }
   }
 
+  const filteredRepositories = repositories.filter((repo) => {
+    const q = search.toLowerCase()
+    return (
+      repo.uris.toLowerCase().includes(q) ||
+      repo.suites.toLowerCase().includes(q) ||
+      repo.components.toLowerCase().includes(q) ||
+      repo.file_path.toLowerCase().includes(q)
+    )
+  })
+
   const getEnabledRepositoryCount = (): number => {
     return repositories.filter((repo) => repo.enabled).length
   }
@@ -110,6 +121,17 @@ export default function Repositories() {
         </div>
       </div>
 
+      <div className="relative">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search repositories…"
+          className="w-full pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
           <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
@@ -117,11 +139,13 @@ export default function Repositories() {
       )}
 
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-        {repositories.length === 0 ? (
-          <div className="p-4 text-gray-600 dark:text-gray-400">No repositories configured</div>
+        {filteredRepositories.length === 0 ? (
+          <div className="p-4 text-gray-600 dark:text-gray-400">
+            {search ? 'No repositories match your search' : 'No repositories configured'}
+          </div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {repositories.map((repo) => (
+            {filteredRepositories.map((repo) => (
               <div key={repo.id} className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
                 <button
                   onClick={() => toggleRepositoryEnabled(repo)}

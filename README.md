@@ -28,13 +28,29 @@ A lightweight Linux system management desktop app built with Tauri and React. Mo
 
 ## Installation
 
-### Prerequisites
+### APT (Ubuntu / Debian)
+
+```bash
+curl -fsSL "https://packages.buildkite.com/cedric-lefebvre/ppa/gpgkey" \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/cedric-lefebvre_ppa-archive-keyring.gpg
+
+echo -e "deb [signed-by=/etc/apt/keyrings/cedric-lefebvre_ppa-archive-keyring.gpg] https://packages.buildkite.com/cedric-lefebvre/ppa/any/ any main\ndeb-src [signed-by=/etc/apt/keyrings/cedric-lefebvre_ppa-archive-keyring.gpg] https://packages.buildkite.com/cedric-lefebvre/ppa/any/ any main" \
+  | sudo tee /etc/apt/sources.list.d/buildkite-cedric-lefebvre-ppa.list
+
+sudo apt update && sudo apt install gantry
+```
+
+Once set up, `sudo apt upgrade` will keep Gantry up to date automatically.
+
+### Manual Download
+
+Download the latest `.deb`, `.rpm`, or `.AppImage` from the [releases page](https://github.com/Cedric-Lefebvre/gantry/releases).
+
+### Build from Source
 
 - Node.js 18+
 - Rust 1.77+
 - [Tauri system dependencies](https://tauri.app/start/prerequisites/)
-
-### Build from Source
 
 ```bash
 git clone https://github.com/Cedric-Lefebvre/gantry.git
@@ -43,8 +59,6 @@ npm install
 npm run tauri dev     # development
 npm run tauri build   # production
 ```
-
-Built packages are output to `src-tauri/target/release/bundle/` as `.deb`, `.rpm`, and `.AppImage`.
 
 ## Configuration
 
