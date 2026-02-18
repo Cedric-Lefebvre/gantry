@@ -51,10 +51,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name || github.event.inputs.tag }}
-          releaseName: "Gantry ${{ github.ref_name || github.event.inputs.tag }}"
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Gantry ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
-            See the [changelog](https://github.com/${{ github.repository }}/commits/${{ github.ref_name || github.event.inputs.tag }}) for details.
+            See the [changelog](https://github.com/${{ github.repository }}/commits/${{ github.event.inputs.tag || github.ref_name }}) for details.
           releaseDraft: false
           prerelease: false
 
