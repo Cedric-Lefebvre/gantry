@@ -65,7 +65,7 @@ jobs:
         run: |
           DEB=$(find target/release/bundle/deb -name "*.deb" -not -name "*.sig" | head -1)
           echo "Found: $DEB"
-          curl -sf -X POST \
+          curl -f -X POST \
             "https://api.buildkite.com/v2/packages/organizations/cedric-lefebvre/registries/ppa/packages" \
             -H "Authorization: Bearer $PACKAGECLOUD_TOKEN" \
             -F "file=@$DEB"
