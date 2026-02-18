@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { ChevronDown, ChevronRight, ChevronLeft, ChevronUp, Search, Trash2, X, Layers } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, Search, Trash2, X, Layers, RefreshCw } from 'lucide-react'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
+import Pagination from '../components/Pagination'
 
 interface ProcessEntry {
   pid: number
@@ -165,10 +166,17 @@ export default function Processes() {
   const [currentPage, setCurrentPage] = useState(1)
   const [sortKey, setSortKey] = useState<'name' | 'cpu' | 'memory'>('memory')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [autoRefresh, setAutoRefresh] = useState(false)
 
   useEffect(() => {
     fetchProcesses()
   }, [])
+
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(fetchProcesses, 5000)
+    return () => clearInterval(id)
+  }, [autoRefresh])
 
   const fetchProcesses = async () => {
     try {
@@ -252,6 +260,17 @@ export default function Processes() {
             <span>{totalProcessCount} total</span>
           </div>
           <button
+            onClick={() => setAutoRefresh(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              autoRefresh
+                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
+          >
+            <RefreshCw size={13} className={autoRefresh ? 'animate-spin' : ''} />
+            Live
+          </button>
+          <button
             onClick={fetchProcesses}
             className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
           >
@@ -331,23 +350,8 @@ export default function Processes() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
-          >
-            <ChevronLeft size={16} />
-            Previous
-          </button>
-          <span className="text-sm text-gray-500 dark:text-gray-400">Page {currentPage} of {totalPages}</span>
-          <button
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
-          >
-            Next
-            <ChevronRight size={16} />
-          </button>
+          <span className="text-sm text-gray-500 dark:text-gray-400">{filteredGroups.length} apps</span>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
         </div>
       )}
     </div>

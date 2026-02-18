@@ -12,6 +12,17 @@ export async function getSystemOverview() {
   }
 }
 
+export async function getOsInfo() {
+  try {
+    const result = await invoke('get_os_info')
+    logger.debug('getOsInfo success')
+    return result
+  } catch (error) {
+    logger.error('getOsInfo failed', error)
+    throw error
+  }
+}
+
 export async function getResources() {
   try {
     const result = await invoke('get_resources')

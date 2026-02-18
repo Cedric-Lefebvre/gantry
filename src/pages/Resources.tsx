@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import SpeedometerGauge from '../components/SpeedometerGauge'
 import { Thermometer, Fan, ArrowDown, ArrowUp, HardDrive, ChevronDown, ChevronRight, Network, Clock, Activity, X, Cpu, Monitor, MemoryStick, Wifi, Info } from 'lucide-react'
+import CopyableText from '../components/CopyableText'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
 import type { NetworkRate, DiskIoRate } from '../hooks/useResourceMonitor'
 
@@ -80,10 +81,10 @@ const cleanTempLabel = (label: string, sensor: string, category: SensorCategory)
   if (category === 'storage') {
     if (lower === 'composite') return 'Drive'
     const sensorMatch = lower.match(/sensor\s*(\d+)/i)
-    if (sensorMatch) return `Sensor ${sensorMatch[1]}`
+    if (sensorMatch) return `Die ${sensorMatch[1]}`
   }
-  if (category === 'memory') return 'Temperature'
-  if (category === 'network') return 'Temperature'
+  if (category === 'memory') return ''
+  if (category === 'network') return ''
   if (label.startsWith(sensor + ' ')) return label.slice(sensor.length + 1)
   return label
 }
@@ -93,13 +94,34 @@ const cleanFanLabel = (label: string, sensor: string): string => {
   return label
 }
 
+const cleanNetworkSensor = (sensor: string): string => {
+  const s = sensor.replace(/_phy\d+$/, '').replace(/_\d+$/, '')
+  if (s.startsWith('iwl')) return 'Intel WiFi'
+  if (s.startsWith('rtw')) return 'Realtek WiFi'
+  if (s.startsWith('brcm')) return 'Broadcom WiFi'
+  return s.toUpperCase()
+}
+
+
 const isUserFacingInterface = (name: string): boolean => {
   if (name === 'lo') return false
   if (name.startsWith('veth')) return false
   if (name.startsWith('docker')) return false
   if (name.startsWith('br-')) return false
   if (name.startsWith('virbr')) return false
+  if (name.startsWith('lxcbr')) return false
+  if (name.startsWith('lxd')) return false
   return true
+}
+
+const getInterfaceLabel = (name: string): string => {
+  if (name.startsWith('en') || name.startsWith('eth') || name.startsWith('em')) return 'Ethernet'
+  if (name.startsWith('wl')) return 'Wi-Fi'
+  if (name.startsWith('wg')) return 'WireGuard'
+  if (name.startsWith('tun')) return 'VPN'
+  if (name.startsWith('tap')) return 'VPN'
+  if (name.startsWith('ppp')) return 'PPP'
+  return name
 }
 
 const cleanGpuName = (name: string): string => {
@@ -248,6 +270,11 @@ export default function Resources() {
   })
 
   const gpuTemp = resources?.gpu?.[0]?.temperature
+
+  const storageTemps = resources?.temperatures
+    ?.filter(t => getSensorCategory(t.sensor) === 'storage' && t.label.toLowerCase() === 'composite')
+    ?.sort((a, b) => a.device_id.localeCompare(b.device_id)) ?? []
+
   const visibleNetworkRates = networkRates.filter(n => isUserFacingInterface(n.name))
 
   return (
@@ -496,7 +523,7 @@ export default function Resources() {
         const hasRawFans = resources?.fans && resources.fans.length > 0
         const hasSensors = hasTemps || hasRawFans
 
-        type DeviceSensors = { deviceId: string; deviceName: string; temps: { label: string; celsius: number }[]; fans: { label: string; rpm: number }[] }
+        type DeviceSensors = { deviceId: string; deviceName: string; sensor: string; temps: { label: string; celsius: number }[]; fans: { label: string; rpm: number }[] }
         const grouped: Record<SensorCategory, DeviceSensors[]> = {
           cpu: [], gpu: [], storage: [], memory: [], network: [], other: [],
         }
@@ -505,7 +532,7 @@ export default function Resources() {
           const cat = getSensorCategory(t.sensor)
           let device = grouped[cat].find(d => d.deviceId === t.device_id)
           if (!device) {
-            device = { deviceId: t.device_id, deviceName: t.device_name || '', temps: [], fans: [] }
+            device = { deviceId: t.device_id, deviceName: t.device_name || '', sensor: t.sensor, temps: [], fans: [] }
             grouped[cat].push(device)
           }
           device.temps.push({ label: cleanTempLabel(t.label, t.sensor, cat), celsius: t.celsius })
@@ -514,7 +541,7 @@ export default function Resources() {
           const cat = getSensorCategory(f.sensor)
           let device = grouped[cat].find(d => d.deviceId === f.device_id)
           if (!device) {
-            device = { deviceId: f.device_id, deviceName: '', temps: [], fans: [] }
+            device = { deviceId: f.device_id, deviceName: '', sensor: f.sensor, temps: [], fans: [] }
             grouped[cat].push(device)
           }
           device.fans.push({ label: cleanFanLabel(f.label, f.sensor), rpm: f.rpm })
@@ -532,7 +559,7 @@ export default function Resources() {
             case 'memory': return `DIMM ${idx + 1}`
             case 'gpu': return `GPU ${idx + 1}`
             case 'cpu': return `CPU ${idx + 1}`
-            case 'network': return `Adapter ${idx + 1}`
+            case 'network': return cleanNetworkSensor(device.sensor) || `Adapter ${idx + 1}`
             default: return `Device ${idx + 1}`
           }
         }
@@ -560,6 +587,11 @@ export default function Resources() {
                   {gpuTemp !== null && gpuTemp !== undefined && (
                     <span className={`font-mono font-medium ${tempColor(gpuTemp)}`}>
                       GPU {gpuTemp}°C
+                    </span>
+                  )}
+                  {storageTemps.length > 0 && (
+                    <span className={`font-mono font-medium ${tempColor(Math.max(...storageTemps.map(t => t.celsius)))}`}>
+                      {storageTemps.length === 1 ? 'NVMe' : 'NVMe ↑'} {Math.max(...storageTemps.map(t => t.celsius))}°C
                     </span>
                   )}
                 </div>
@@ -612,47 +644,79 @@ export default function Resources() {
                       {isExpanded && (
                         <div className="px-5 pb-3 pl-12">
                           {devices.length === 1 ? (
-                            <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
-                              {devices[0].temps.map((temp, i) => (
-                                <div key={`t${i}`} className="flex justify-between text-sm">
-                                  <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
-                                  <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                            (() => {
+                              const d = devices[0]
+                              const allEmpty = d.temps.every(t => t.label === '')
+                              if (allEmpty && d.temps.length === 1 && d.fans.length === 0) {
+                                return (
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-gray-500 dark:text-gray-400">{getDeviceLabel(cat, devices, 0)}</span>
+                                    <CopyableText value={`${d.temps[0].celsius}°C`}>
+                                      <span className={`font-mono font-medium ${tempColor(d.temps[0].celsius)}`}>{d.temps[0].celsius}°C</span>
+                                    </CopyableText>
+                                  </div>
+                                )
+                              }
+                              return (
+                                <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
+                                  {d.temps.map((temp, i) => (
+                                    <div key={`t${i}`} className="flex justify-between text-sm">
+                                      {temp.label && <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>}
+                                      <CopyableText value={`${temp.celsius}°C`}>
+                                        <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                                      </CopyableText>
+                                    </div>
+                                  ))}
+                                  {d.fans.map((fan, i) => (
+                                    <div key={`f${i}`} className="flex justify-between text-sm">
+                                      <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
+                                        <Fan size={12} className="text-blue-400" />{fan.label}
+                                      </span>
+                                      <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
-                              {devices[0].fans.map((fan, i) => (
-                                <div key={`f${i}`} className="flex justify-between text-sm">
-                                  <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
-                                    <Fan size={12} className="text-blue-400" />{fan.label}
-                                  </span>
-                                  <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
-                                </div>
-                              ))}
-                            </div>
+                              )
+                            })()
                           ) : (
                             <div className="space-y-3">
-                              {devices.map((device, devIdx) => (
-                                <div key={device.deviceId}>
-                                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 truncate" title={getDeviceLabel(cat, devices, devIdx)}>
-                                    {getDeviceLabel(cat, devices, devIdx)}
+                              {devices.map((device, devIdx) => {
+                                const label = getDeviceLabel(cat, devices, devIdx)
+                                const singleEmpty = device.temps.length === 1 && device.temps[0].label === '' && device.fans.length === 0
+                                if (singleEmpty) {
+                                  return (
+                                    <div key={device.deviceId} className="flex justify-between text-sm">
+                                      <span className="text-gray-600 dark:text-gray-400">{label}</span>
+                                      <CopyableText value={`${device.temps[0].celsius}°C`}>
+                                        <span className={`font-mono font-medium ${tempColor(device.temps[0].celsius)}`}>{device.temps[0].celsius}°C</span>
+                                      </CopyableText>
+                                    </div>
+                                  )
+                                }
+                                return (
+                                  <div key={device.deviceId}>
+                                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 truncate" title={label}>{label}</div>
+                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
+                                      {device.temps.map((temp, i) => (
+                                        <div key={`t${i}`} className="flex justify-between text-sm">
+                                          {temp.label && <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>}
+                                          <CopyableText value={`${temp.celsius}°C`}>
+                                            <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
+                                          </CopyableText>
+                                        </div>
+                                      ))}
+                                      {device.fans.map((fan, i) => (
+                                        <div key={`f${i}`} className="flex justify-between text-sm">
+                                          <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
+                                            <Fan size={12} className="text-blue-400" />{fan.label}
+                                          </span>
+                                          <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
-                                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1.5">
-                                    {device.temps.map((temp, i) => (
-                                      <div key={`t${i}`} className="flex justify-between text-sm">
-                                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2">{temp.label}</span>
-                                        <span className={`font-mono font-medium ${tempColor(temp.celsius)}`}>{temp.celsius}°C</span>
-                                      </div>
-                                    ))}
-                                    {device.fans.map((fan, i) => (
-                                      <div key={`f${i}`} className="flex justify-between text-sm">
-                                        <span className="text-gray-600 dark:text-gray-400 truncate mr-2 flex items-center gap-1">
-                                          <Fan size={12} className="text-blue-400" />{fan.label}
-                                        </span>
-                                        <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{fan.rpm} RPM</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
+                                )
+                              })}
                             </div>
                           )}
                         </div>
@@ -688,7 +752,10 @@ export default function Resources() {
                 return (
                   <div key={i}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{net.name}</span>
+                      <div>
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{getInterfaceLabel(net.name)}</span>
+                        <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500 font-mono">{net.name}</span>
+                      </div>
                       <div className="flex gap-3 text-sm font-mono">
                         <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
                           <ArrowDown size={12} />{formatRate(net.rx)}
@@ -725,10 +792,20 @@ export default function Resources() {
             <div className="space-y-5">
               {diskIoRates.map((disk, i) => {
                 const hist = diskIoHistory[disk.name]
+                const nvmeMatch = disk.name.match(/nvme(\d+)/)
+                const nvmeIdx = nvmeMatch ? parseInt(nvmeMatch[1]) : -1
+                const diskTemp = nvmeIdx >= 0 ? storageTemps[nvmeIdx] : undefined
                 return (
                   <div key={i}>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{disk.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{disk.name}</span>
+                        {diskTemp && (
+                          <span className={`text-xs font-mono font-medium ${tempColor(diskTemp.celsius)}`}>
+                            {diskTemp.celsius}°C
+                          </span>
+                        )}
+                      </div>
                       <div className="flex gap-3 text-sm font-mono">
                         <span className="text-green-600 dark:text-green-400">R {formatRate(disk.read)}</span>
                         <span className="text-blue-600 dark:text-blue-400">W {formatRate(disk.write)}</span>

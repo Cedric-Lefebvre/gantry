@@ -1,6 +1,6 @@
 # Gantry
 
-A lightweight Linux system management tool built with Tauri and React. Monitor resources, manage services, control repositories, and run custom scripts from a modern desktop interface.
+A lightweight Linux system management desktop app built with Tauri and React. Monitor your machine, manage services, control packages, and run scripts — all from one clean interface.
 
 ## Screenshots
 
@@ -10,80 +10,54 @@ A lightweight Linux system management tool built with Tauri and React. Monitor r
 
 ## Features
 
-### System Monitoring
-- **CPU & Memory** - Real-time gauges with historical graphs
-- **GPU Usage** - NVIDIA, AMD, and Intel GPU monitoring
-- **Disk Usage** - Storage utilization across all mounted drives
+**Resources** — Live CPU, memory, GPU, disk, and network monitoring with historical sparkline graphs. Per-core breakdown, thermal sensors grouped by device (CPU, GPU, NVMe, DIMM, network adapter), fan speeds, load average, and uptime.
 
-### Service Management
-- Start, stop, and restart systemd services
-- Enable/disable services at boot
-- Visual status indicators for running services
-- Support for both system and user services
+**Processes** — Grouped process list with CPU/memory usage. Kill individual processes or entire groups. Live auto-refresh mode, sortable columns, and search by name or PID.
 
-### APT Repository Control
-- View all configured APT repositories
-- Enable/disable repositories with one click
-- Supports both traditional `.list` and DEB822 `.sources` formats
+**Services** — Browse and manage systemd services (user + system). Start, stop, restart, enable, and disable with live status indicators.
 
-### Custom Scripts
-- Create and manage custom shell scripts
-- Run scripts with optional sudo privileges
-- View output in an integrated terminal
-- Configuration stored in `~/.gantry/scripts.yaml`
+**Devices** — Hardware overview: block devices, PCI, USB, network interfaces, input devices, and processor info. OS/kernel info card at the top. Click any value to copy it.
 
-### Additional Tools
-- **Devices** - View block devices, USB, network, and PCI devices
-- **Processes** - Monitor and kill running processes
-- **Startup Apps** - View autostart applications
-- **Logs** - Application logging
+**APT Repositories** — View, add, enable/disable, and delete APT sources. Supports both `.list` and DEB822 `.sources` formats.
+
+**Startup Apps** — Full CRUD for XDG autostart entries. Add, edit, toggle, and delete `~/.config/autostart` desktop files.
+
+**Scripts** — Create and run custom shell scripts with optional sudo. Output displayed inline.
+
+**System Report** — One-click hardware summary (OS, CPU, RAM, GPU, storage) formatted for pasting into support tickets or GitHub issues.
 
 ## Installation
 
 ### Prerequisites
+
 - Node.js 18+
 - Rust 1.77+
-- System dependencies for Tauri (see [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites))
+- [Tauri system dependencies](https://tauri.app/start/prerequisites/)
 
 ### Build from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/Cedric-Lefebvre/gantry.git
 cd gantry
-
-# Install dependencies
 npm install
-
-# Development mode
-npm run tauri dev
-
-# Build for production
-npm run tauri build
+npm run tauri dev     # development
+npm run tauri build   # production
 ```
 
-### Pre-built Packages
-
-After building, packages are available in `target/release/bundle/`:
-- `.deb` - Debian/Ubuntu
-- `.rpm` - Fedora/RHEL
-- `.AppImage` - Universal Linux
+Built packages are output to `src-tauri/target/release/bundle/` as `.deb`, `.rpm`, and `.AppImage`.
 
 ## Configuration
 
-Gantry stores configuration in `~/.gantry/`:
-
 ```
 ~/.gantry/
-├── scripts.yaml    # Custom scripts
-└── settings.yaml   # Application settings (theme, etc.)
+├── scripts.yaml    # custom scripts
+└── settings.yaml   # theme and preferences
 ```
 
 ## Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS
 - **Backend**: Rust, Tauri 2.0
-- **Icons**: Lucide React
 
 ## License
 

@@ -6,6 +6,8 @@ use tauri::image::Image;
 use modules::{
     get_system_overview,
     get_resources,
+    get_os_info,
+    save_report_file,
     list_processes,
     kill_process,
     kill_process_group,
@@ -48,6 +50,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_system_overview,
             get_resources,
+            get_os_info,
+            save_report_file,
             list_processes,
             kill_process,
             kill_process_group,

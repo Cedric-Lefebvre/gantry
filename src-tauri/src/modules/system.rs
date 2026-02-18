@@ -363,6 +363,59 @@ fn get_cpu_model() -> String {
 }
 
 #[tauri::command]
+pub fn save_report_file(content: String, filename: String) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let dir = std::path::PathBuf::from(&home).join("Downloads");
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    let path = dir.join(&filename);
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn get_os_info() -> Result<serde_json::Value, String> {
+    let mut os_name = String::from("Linux");
+    let mut os_version = String::new();
+    let mut os_pretty = String::new();
+    if let Ok(content) = fs::read_to_string("/etc/os-release") {
+        for line in content.lines() {
+            if line.starts_with("NAME=") {
+                os_name = line["NAME=".len()..].trim_matches('"').to_string();
+            } else if line.starts_with("VERSION=") {
+                os_version = line["VERSION=".len()..].trim_matches('"').to_string();
+            } else if line.starts_with("PRETTY_NAME=") {
+                os_pretty = line["PRETTY_NAME=".len()..].trim_matches('"').to_string();
+            }
+        }
+    }
+
+    let mut kernel = String::new();
+    if let Ok(content) = fs::read_to_string("/proc/version") {
+        if let Some(ver_part) = content.split_whitespace().nth(2) {
+            kernel = ver_part.to_string();
+        }
+    }
+
+    let hostname = fs::read_to_string("/proc/sys/kernel/hostname")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let arch = std::env::consts::ARCH.to_string();
+
+    Ok(json!({
+        "os_name": os_name,
+        "os_version": os_version,
+        "os_pretty": if os_pretty.is_empty() { format!("{} {}", os_name, os_version) } else { os_pretty },
+        "kernel": kernel,
+        "hostname": hostname,
+        "arch": arch,
+    }))
+}
+
+#[tauri::command]
 pub fn get_resources() -> Result<serde_json::Value, String> {
     let mut sys = get_system().lock().unwrap();
     sys.refresh_cpu_all();

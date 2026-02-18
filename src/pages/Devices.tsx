@@ -4,8 +4,11 @@ import {
   ChevronDown, ChevronRight, HardDrive, Usb, Wifi, Monitor,
   Bluetooth, Keyboard, Mouse, Camera, Speaker, Gamepad2,
   Printer, Network, Globe, Container, CircleDot,
-  Cpu, Shield, Server, RotateCw, Smartphone, ChevronsDownUp, ChevronsUpDown, Search
+  Cpu, Shield, Server, RotateCw, Smartphone, ChevronsDownUp, ChevronsUpDown, Search, FileText
 } from 'lucide-react'
+import CopyableText from '../components/CopyableText'
+import { getOsInfo } from '../api/system'
+import SystemReportModal from '../components/SystemReportModal'
 
 interface BlockDevice {
   name: string
@@ -51,6 +54,13 @@ interface InputDevice {
   name: string
   device_type: string
   path: string
+}
+
+interface OsInfo {
+  os_pretty: string
+  kernel: string
+  hostname: string
+  arch: string
 }
 
 interface ProcessorInfo {
@@ -237,14 +247,29 @@ function StorageDeviceNode({ device, depth = 0 }: { device: BlockDevice; depth?:
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900 dark:text-gray-100 text-sm">{device.name}</span>
-            {device.model && <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{device.model.trim()}</span>}
+            <CopyableText value={device.name}>
+              <span className="font-medium text-gray-900 dark:text-gray-100 text-sm">{device.name}</span>
+            </CopyableText>
+            {device.model && (
+              <CopyableText value={device.model.trim()}>
+                <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{device.model.trim()}</span>
+              </CopyableText>
+            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
             <span>{device.size}</span>
             {device.fstype && <span className="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">{device.fstype}</span>}
-            {device.mountpoint && <span className="text-blue-500">{device.mountpoint}</span>}
+            {device.mountpoint && (
+              <CopyableText value={device.mountpoint}>
+                <span className="text-blue-500">{device.mountpoint}</span>
+              </CopyableText>
+            )}
             {device.tran && <span className="uppercase">{device.tran}</span>}
+            {device.serial && (
+              <CopyableText value={device.serial}>
+                <span className="font-mono text-gray-400">S/N {device.serial}</span>
+              </CopyableText>
+            )}
           </div>
         </div>
 
@@ -272,10 +297,14 @@ function PciDeviceRow({ dev }: { dev: PciDevice }) {
     <div className="flex items-center gap-3 pl-16 pr-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/30">
       <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className={`text-sm truncate ${isUnknown ? 'text-gray-400 dark:text-gray-500 italic' : 'text-gray-900 dark:text-gray-100'}`}>{name}</div>
+        <CopyableText value={name}>
+          <div className={`text-sm truncate ${isUnknown ? 'text-gray-400 dark:text-gray-500 italic' : 'text-gray-900 dark:text-gray-100'}`}>{name}</div>
+        </CopyableText>
         <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
           <span>{vendor}</span>
-          <span className="font-mono">{dev.slot}</span>
+          <CopyableText value={dev.slot}>
+            <span className="font-mono">{dev.slot}</span>
+          </CopyableText>
         </div>
       </div>
     </div>
@@ -295,10 +324,14 @@ function UsbDeviceRow({ dev }: { dev: UsbDevice }) {
     <div className="flex items-center gap-3 pl-16 pr-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/30">
       <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{product}</div>
+        <CopyableText value={product}>
+          <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{product}</div>
+        </CopyableText>
         <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
           {vendor && <span>{vendor}</span>}
-          <span className="font-mono">{dev.vendor_id}:{dev.product_id}</span>
+          <CopyableText value={`${dev.vendor_id}:${dev.product_id}`}>
+            <span className="font-mono">{dev.vendor_id}:{dev.product_id}</span>
+          </CopyableText>
         </div>
       </div>
     </div>
@@ -311,15 +344,23 @@ function NetworkDeviceRow({ dev }: { dev: NetworkDevice }) {
       <span className={`w-2 h-2 rounded-full shrink-0 ${dev.state === 'UP' ? 'bg-green-500' : 'bg-gray-400'}`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{dev.name}</span>
+          <CopyableText value={dev.name}>
+            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{dev.name}</span>
+          </CopyableText>
           <span className={`text-xs px-1.5 py-0.5 rounded ${dev.state === 'UP' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
             {dev.state}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400 mt-0.5">
-          {dev.mac_address && <span className="font-mono">{dev.mac_address}</span>}
+          {dev.mac_address && (
+            <CopyableText value={dev.mac_address}>
+              <span className="font-mono">{dev.mac_address}</span>
+            </CopyableText>
+          )}
           {dev.ip_addresses.map((ip, i) => (
-            <span key={i} className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">{ip}</span>
+            <CopyableText key={i} value={ip}>
+              <span className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">{ip}</span>
+            </CopyableText>
           ))}
           <span>MTU {dev.mtu}</span>
         </div>
@@ -333,8 +374,14 @@ function InputDeviceRow({ dev }: { dev: InputDevice }) {
     <div className="flex items-center gap-3 pl-16 pr-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/30">
       <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{dev.name}</div>
-        {dev.path && <div className="text-xs text-gray-400 font-mono mt-0.5">{dev.path}</div>}
+        <CopyableText value={dev.name}>
+          <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{dev.name}</div>
+        </CopyableText>
+        {dev.path && (
+          <CopyableText value={dev.path}>
+            <div className="text-xs text-gray-400 font-mono mt-0.5">{dev.path}</div>
+          </CopyableText>
+        )}
       </div>
     </div>
   )
@@ -347,9 +394,11 @@ export default function Devices() {
   const [pciDevices, setPciDevices] = useState<PciDevice[]>([])
   const [inputDevices, setInputDevices] = useState<InputDevice[]>([])
   const [processor, setProcessor] = useState<ProcessorInfo | null>(null)
+  const [osInfo, setOsInfo] = useState<OsInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [globalOpen, setGlobalOpen] = useState<boolean | null>(null)
   const [search, setSearch] = useState('')
+  const [showReport, setShowReport] = useState(false)
 
   const collapseAll = useCallback(() => setGlobalOpen(false), [])
   const expandAll = useCallback(() => setGlobalOpen(true), [])
@@ -360,13 +409,14 @@ export default function Devices() {
 
   const fetchAllDevices = async () => {
     try {
-      const [devData, usbData, netData, pciData, inputData, cpuData] = await Promise.all([
+      const [devData, usbData, netData, pciData, inputData, cpuData, osData] = await Promise.all([
         invoke<{ blockdevices?: BlockDevice[] }>('list_devices'),
         invoke<UsbDevice[]>('list_usb_devices'),
         invoke<NetworkDevice[]>('list_network_devices'),
         invoke<PciDevice[]>('list_pci_devices'),
         invoke<InputDevice[]>('list_input_devices'),
         invoke<ProcessorInfo>('get_processor_info'),
+        getOsInfo() as Promise<OsInfo>,
       ])
 
       setBlockDevices(devData?.blockdevices || [])
@@ -375,6 +425,7 @@ export default function Devices() {
       setPciDevices(pciData || [])
       setInputDevices(inputData || [])
       setProcessor(cpuData || null)
+      setOsInfo(osData || null)
     } catch (err) {
       console.error('Failed to load devices:', err)
     } finally {
@@ -458,13 +509,57 @@ export default function Devices() {
             <RotateCw size={14} />
             Refresh
           </button>
+          <button
+            onClick={() => setShowReport(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+          >
+            <FileText size={14} />
+            Report
+          </button>
         </div>
       </div>
+
+      {showReport && <SystemReportModal onClose={() => setShowReport(false)} />}
+
+      {osInfo && (!searching || ['os', 'operating', 'system', 'linux', 'kernel', 'hostname', osInfo.os_pretty, osInfo.hostname, osInfo.kernel, osInfo.arch].some(v => v.toLowerCase().includes(q))) && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 px-5 py-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Monitor size={15} className="text-gray-400" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Operating System</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-gray-400 mb-0.5">Hostname</div>
+              <CopyableText value={osInfo.hostname}>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{osInfo.hostname}</span>
+              </CopyableText>
+            </div>
+            <div>
+              <div className="text-xs text-gray-400 mb-0.5">OS</div>
+              <CopyableText value={osInfo.os_pretty}>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{osInfo.os_pretty}</span>
+              </CopyableText>
+            </div>
+            <div>
+              <div className="text-xs text-gray-400 mb-0.5">Kernel</div>
+              <CopyableText value={osInfo.kernel}>
+                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{osInfo.kernel}</span>
+              </CopyableText>
+            </div>
+            <div>
+              <div className="text-xs text-gray-400 mb-0.5">Architecture</div>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{osInfo.arch}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {processor && (!searching || [processor.model, processor.vendor, 'cpu', 'processor'].some(v => v.toLowerCase().includes(q))) && (
         <DeviceSection title="Processor" icon={<Cpu size={18} />} count={1} forceOpen={forceState}>
           <div className="px-5 py-4">
-            <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{processor.model}</div>
+            <CopyableText value={processor.model}>
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{processor.model}</div>
+            </CopyableText>
             <div className="flex flex-wrap gap-x-6 gap-y-1.5 mt-2 text-xs text-gray-500 dark:text-gray-400">
               <span>{processor.cores} cores / {processor.threads} threads</span>
               {processor.sockets > 1 && <span>{processor.sockets} sockets</span>}

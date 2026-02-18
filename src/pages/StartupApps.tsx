@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { listStartupApps, addStartupApp, editStartupApp, deleteStartupApp, toggleStartupApp } from '../api/config'
 import { Plus, Pencil, Trash2, RotateCw } from 'lucide-react'
+import Pagination from '../components/Pagination'
 
 interface StartupApp {
   name?: string
@@ -20,6 +21,8 @@ export default function StartupApps() {
   const [formExec, setFormExec] = useState('')
   const [togglingFile, setTogglingFile] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const ITEMS_PER_PAGE = 20
 
   useEffect(() => {
     fetchApps()
@@ -132,7 +135,7 @@ export default function StartupApps() {
           <div className="p-4 text-gray-600 dark:text-gray-400">No autostart entries found.</div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {apps.map((app) => (
+            {apps.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map((app) => (
               <div key={app.file || app.name} className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
                 <button
                   onClick={() => handleToggle(app)}
@@ -176,8 +179,15 @@ export default function StartupApps() {
       </div>
 
       {apps.length > 0 && (
-        <div className="text-sm text-gray-600 dark:text-gray-400">
-          {apps.filter(a => a.enabled).length} of {apps.length} startup apps enabled
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            {apps.filter(a => a.enabled).length} of {apps.length} enabled
+          </span>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.ceil(apps.length / ITEMS_PER_PAGE)}
+            onPageChange={setCurrentPage}
+          />
         </div>
       )}
 

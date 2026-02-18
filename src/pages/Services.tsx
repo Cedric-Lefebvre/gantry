@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, User, Monitor, X } from 'lucide-react'
+import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronUp, ChevronDown, User, Monitor, X } from 'lucide-react'
+import Pagination from '../components/Pagination'
 
 interface ServiceInfo {
   name: string
@@ -23,8 +24,8 @@ export default function Services() {
   const [error, setError] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [filterType, setFilterType] = useState<'all' | 'system' | 'user'>('all')
-  const [sortKey, setSortKey] = useState<'status' | 'type' | 'boot' | 'name' | 'description'>('name')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortKey, setSortKey] = useState<'status' | 'type' | 'boot' | 'name' | 'description'>('status')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -347,34 +348,10 @@ export default function Services() {
 
       {!loading && (
         <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            {filteredServices.length > 0 ? (
-              <>Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, filteredServices.length)} of {filteredServices.length} services</>
-            ) : (
-              <>0 services</>
-            )}
-          </div>
-          {totalPages > 1 && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          )}
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {filteredServices.length} service{filteredServices.length !== 1 ? 's' : ''}
+          </span>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
         </div>
       )}
     </div>
