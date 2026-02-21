@@ -46,6 +46,14 @@ Once set up, `sudo apt upgrade` will keep Gantry up to date automatically.
 
 Download the latest `.deb`, `.rpm`, or `.AppImage` from the [releases page](https://github.com/Cedric-Lefebvre/gantry/releases).
 
+### CLI
+
+```bash
+gantry            # launch the app
+gantry --version  # print version
+gantry --help     # print help
+```
+
 ### Build from Source
 
 - Node.js 18+
