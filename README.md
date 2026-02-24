@@ -68,6 +68,44 @@ npm run tauri dev     # development
 npm run tauri build   # production
 ```
 
+## Testing
+
+Gantry has an end-to-end test suite that drives the real app via WebdriverIO + tauri-driver.
+
+### Prerequisites (one-time)
+
+```bash
+# Tauri's WebDriver wrapper
+cargo install tauri-driver
+
+# WebKitWebDriver (webkit2gtk)
+sudo apt install webkit2gtk-driver   # Ubuntu 22.04
+# or
+sudo apt install webkitgtk-6.0-injected-bundle  # Ubuntu 24.04+
+
+# Build the release binary first (tests run against the real binary)
+npm run tauri:build
+```
+
+### Run
+
+```bash
+npm run test:e2e
+```
+
+`wdio.conf.cjs` automatically starts `tauri-driver`, launches the app, runs all 6 spec files sequentially, and tears everything down. A display is required (Xorg or Wayland with XWayland).
+
+### Specs
+
+| File | What it covers |
+|------|---------------|
+| `01-navigation` | Sidebar links, active highlight |
+| `02-resources` | CPU / memory / disk widgets load |
+| `03-processes` | Process list, search, refresh |
+| `04-devices` | Hardware cards, collapse/expand |
+| `05-services` | Service list, search, tabs |
+| `06-scripts` | Full CRUD: add → run → delete, prompt variables |
+
 ## Configuration
 
 ```

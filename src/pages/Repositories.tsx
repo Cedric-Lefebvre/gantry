@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RotateCw, Plus, Trash2, Search } from 'lucide-react'
 import { addAptRepo, deleteAptRepo } from '../api/config'
@@ -83,19 +83,17 @@ export default function Repositories() {
     }
   }
 
-  const filteredRepositories = repositories.filter((repo) => {
+  const filteredRepositories = useMemo(() => {
     const q = search.toLowerCase()
-    return (
+    return repositories.filter((repo) =>
       repo.uris.toLowerCase().includes(q) ||
       repo.suites.toLowerCase().includes(q) ||
       repo.components.toLowerCase().includes(q) ||
       repo.file_path.toLowerCase().includes(q)
     )
-  })
+  }, [repositories, search])
 
-  const getEnabledRepositoryCount = (): number => {
-    return repositories.filter((repo) => repo.enabled).length
-  }
+  const enabledCount = useMemo(() => repositories.filter((repo) => repo.enabled).length, [repositories])
 
   if (isLoading) return <div className="p-4 text-gray-900 dark:text-gray-100">Loading repositories...</div>
 
@@ -199,7 +197,7 @@ export default function Repositories() {
 
       {repositories.length > 0 && (
         <div className="text-sm text-gray-600 dark:text-gray-400">
-          {getEnabledRepositoryCount()} of {repositories.length} repositories enabled
+          {enabledCount} of {repositories.length} repositories enabled
         </div>
       )}
 

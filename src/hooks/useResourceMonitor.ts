@@ -159,8 +159,9 @@ export function useResourceMonitorProvider(): ResourceMonitorData {
 
         const prevNet = prevNetworkRef.current
         if (prevNet && data.network) {
+          const prevNetMap = new Map(prevNet.map(p => [p.name, p]))
           const rates = data.network.map(curr => {
-            const old = prevNet.find(p => p.name === curr.name)
+            const old = prevNetMap.get(curr.name)
             return {
               name: curr.name,
               rx: old ? Math.max(0, curr.rx_bytes - old.rx_bytes) : 0,
@@ -194,8 +195,9 @@ export function useResourceMonitorProvider(): ResourceMonitorData {
 
         const prevDisk = prevDiskIoRef.current
         if (prevDisk && data.disk_io) {
+          const prevDiskMap = new Map(prevDisk.map(p => [p.name, p]))
           const rates = data.disk_io.map(curr => {
-            const old = prevDisk.find(p => p.name === curr.name)
+            const old = prevDiskMap.get(curr.name)
             return {
               name: curr.name,
               read: old ? Math.max(0, curr.read_bytes - old.read_bytes) : 0,

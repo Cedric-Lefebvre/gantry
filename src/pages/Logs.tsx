@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { logger } from '../utils/logger'
 import { readLogFile, clearLogFile } from '../api/logging'
 import { Trash2, RefreshCw, Download } from 'lucide-react'
@@ -133,7 +133,7 @@ export default function Logs() {
               : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
           }`}
         >
-          📄 File Logs ({fileLogLineCount} lines)
+          File Logs ({fileLogLineCount} lines)
         </button>
         <button
           onClick={() => setViewMode('browser')}
@@ -143,7 +143,7 @@ export default function Logs() {
               : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
           }`}
         >
-          💾 Browser Storage ({logs.length} entries)
+          Browser Storage ({logs.length} entries)
         </button>
       </div>
 
@@ -222,7 +222,7 @@ export default function Logs() {
 
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
         <p className="text-sm text-blue-800 dark:text-blue-300">
-          📍 <strong>File Location:</strong> ~/.gantry/app.log
+          <strong>File Location:</strong> ~/.gantry/app.log
         </p>
         <p className="text-sm text-blue-700 dark:text-blue-400 mt-1">
           All app activity is logged to disk. Click "File Logs" tab to view or download.

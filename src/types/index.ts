@@ -1,5 +1,9 @@
 export type PageType = 'settings' | 'devices' | 'processes' | 'repositories' | 'startup' | 'resources' | 'logs' | 'scripts' | 'services'
 
+export interface AppSettings {
+  theme: string
+}
+
 export interface Process {
   pid: number
   name: string

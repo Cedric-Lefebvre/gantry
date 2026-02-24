@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Palette } from 'lucide-react'
+import { AppSettings } from '../types'
+import { applyTheme } from '../utils/theme'
 
 type Theme = 'light' | 'dark'
-
-interface AppSettings {
-  theme: string
-}
 
 export default function Settings() {
   const [theme, setTheme] = useState<Theme>('light')
@@ -30,14 +28,6 @@ export default function Settings() {
       applyTheme(fallbackTheme)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const applyTheme = (newTheme: Theme) => {
-    if (newTheme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
     }
   }
 

@@ -1,4 +1,3 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn print_help() {
@@ -29,8 +28,10 @@ fn main() {
     return;
   }
 
-  #[cfg(target_os = "linux")]
-  if std::env::var("_GANTRY_DETACHED").is_err() {
+  #[cfg(all(target_os = "linux", not(debug_assertions)))]
+  if std::env::var("_GANTRY_DETACHED").is_err()
+    && std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() != Ok("true")
+  {
     let exe = std::fs::read_link("/proc/self/exe")
       .unwrap_or_else(|_| std::env::current_exe().unwrap());
     let _ = std::process::Command::new("setsid")

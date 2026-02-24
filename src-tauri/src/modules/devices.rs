@@ -348,6 +348,101 @@ pub fn list_input_devices() -> Result<Vec<serde_json::Value>, String> {
     Ok(devices)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_processor_info() {
+        let result = get_processor_info();
+        assert!(result.is_ok(), "get_processor_info failed: {:?}", result.err());
+        let info = result.unwrap();
+        assert!(!info["model"].as_str().unwrap_or("").is_empty(), "CPU model should not be empty");
+        let cores = info["cores"].as_u64().unwrap_or(0);
+        let threads = info["threads"].as_u64().unwrap_or(0);
+        assert!(cores > 0, "cores should be > 0");
+        assert!(threads > 0, "threads should be > 0");
+        assert!(threads >= cores, "threads should be >= cores");
+        assert!(info["features"].as_array().is_some(), "features should be an array");
+    }
+
+    #[test]
+    fn test_list_network_devices_has_loopback() {
+        let result = list_network_devices();
+        assert!(result.is_ok(), "list_network_devices failed: {:?}", result.err());
+        let devices = result.unwrap();
+        let has_lo = devices.iter().any(|d| d["name"].as_str() == Some("lo"));
+        assert!(has_lo, "should have loopback interface 'lo'");
+    }
+
+    #[test]
+    fn test_list_network_devices_fields() {
+        let result = list_network_devices().unwrap();
+        for dev in &result {
+            assert!(dev["name"].as_str().is_some(), "network device should have a name");
+            assert!(dev["state"].as_str().is_some(), "network device should have a state");
+            assert!(dev["device_type"].as_str().is_some(), "network device should have a device_type");
+            assert!(dev["ip_addresses"].as_array().is_some(), "network device should have ip_addresses array");
+        }
+    }
+
+    #[test]
+    fn test_list_input_devices() {
+        let result = list_input_devices();
+        assert!(result.is_ok(), "list_input_devices failed: {:?}", result.err());
+        let devices = result.unwrap();
+        for dev in &devices {
+            assert!(dev["name"].as_str().is_some(), "input device should have a name");
+            assert!(dev["device_type"].as_str().is_some(), "input device should have a device_type");
+            assert!(dev["path"].as_str().is_some(), "input device should have a path");
+        }
+    }
+
+    #[test]
+    fn test_list_devices_returns_valid_json() {
+        let result = list_devices();
+        assert!(result.is_ok(), "list_devices failed: {:?}", result.err());
+        // lsblk returns { "blockdevices": [...] }
+        let data = result.unwrap();
+        assert!(data["blockdevices"].as_array().is_some(), "should have blockdevices array");
+    }
+
+    #[test]
+    fn test_categorize_usb_device() {
+        assert_eq!(categorize_usb_device("USB Hub"), "Hub");
+        assert_eq!(categorize_usb_device("USB Keyboard"), "Keyboard");
+        assert_eq!(categorize_usb_device("Optical Mouse"), "Mouse");
+        assert_eq!(categorize_usb_device("USB Webcam"), "Camera");
+        assert_eq!(categorize_usb_device("USB Audio Device"), "Audio");
+        assert_eq!(categorize_usb_device("USB Mass Storage"), "Storage");
+        assert_eq!(categorize_usb_device("Bluetooth Controller"), "Bluetooth");
+        assert_eq!(categorize_usb_device("Unknown Device XYZ"), "Other");
+    }
+
+    #[test]
+    fn test_categorize_network_device() {
+        assert_eq!(categorize_network_device("lo"), "Loopback");
+        assert_eq!(categorize_network_device("eth0"), "Ethernet");
+        assert_eq!(categorize_network_device("enp3s0"), "Ethernet");
+        assert_eq!(categorize_network_device("wlan0"), "WiFi");
+        assert_eq!(categorize_network_device("wlp2s0"), "WiFi");
+        assert_eq!(categorize_network_device("docker0"), "Docker");
+        assert_eq!(categorize_network_device("tun0"), "VPN");
+        assert_eq!(categorize_network_device("br0"), "Bridge");
+    }
+
+    #[test]
+    fn test_categorize_pci_device() {
+        assert_eq!(categorize_pci_device("VGA compatible controller"), "GPU");
+        assert_eq!(categorize_pci_device("Audio device"), "Audio");
+        assert_eq!(categorize_pci_device("Ethernet controller"), "Network");
+        assert_eq!(categorize_pci_device("USB controller"), "USB Controller");
+        assert_eq!(categorize_pci_device("SATA controller"), "Storage");
+        assert_eq!(categorize_pci_device("Non-Volatile memory controller"), "Storage");
+        assert_eq!(categorize_pci_device("PCI bridge"), "System");
+    }
+}
+
 fn categorize_input_device(name: &str, handlers: &str) -> String {
     let lower = name.to_lowercase();
     if lower.contains("keyboard") || handlers.contains("kbd") { return "Keyboard".to_string(); }

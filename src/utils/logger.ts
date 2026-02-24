@@ -63,7 +63,9 @@ function logMessage(level: LogLevel, message: string, data?: unknown): void {
     data ?? ''
   )
 
-  writeLogToFile(fileLogMessage).catch(() => {})
+  if (level === 'warn' || level === 'error') {
+    writeLogToFile(fileLogMessage).catch(() => {})
+  }
 }
 
 export const logger = {

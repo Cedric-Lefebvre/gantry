@@ -26,9 +26,7 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
 
   let file_path = path.to_string_lossy().to_string();
 
-  // Check if this is a DEB822 format file (.sources)
   if path.extension().map_or(false, |ext| ext == "sources") {
-    // Parse DEB822 format
     let mut current_enabled = true;
     let mut current_types = String::new();
     let mut current_uris = String::new();
@@ -40,7 +38,6 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
       let line_trimmed = line.trim();
 
       if line_trimmed.is_empty() {
-        // End of a stanza - save if we have data
         if !current_uris.is_empty() {
           repos.push(AptRepository {
             id: format!("{}:{}", file_path, start_line),
@@ -54,7 +51,6 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
             original_line: format!("{} {} {} {}", current_types, current_uris, current_suites, current_components),
           });
         }
-        // Reset for next stanza
         current_enabled = true;
         current_types = String::new();
         current_uris = String::new();
@@ -81,7 +77,6 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
       }
     }
 
-    // Don't forget the last stanza
     if !current_uris.is_empty() {
       repos.push(AptRepository {
         id: format!("{}:{}", file_path, start_line),
@@ -96,22 +91,19 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
       });
     }
   } else {
-    // Parse traditional sources.list format
     for (idx, line) in content.lines().enumerate() {
       let line_trimmed = line.trim();
 
-      // Skip empty lines
       if line_trimmed.is_empty() {
         continue;
       }
 
-      // Check if line is commented (disabled)
       let (is_enabled, effective_line) = if line_trimmed.starts_with('#') {
         let uncommented = line_trimmed.trim_start_matches('#').trim();
         if uncommented.starts_with("deb") {
           (false, uncommented.to_string())
         } else {
-          continue; // Not a repo line, just a comment
+          continue;
         }
       } else if line_trimmed.starts_with("deb") {
         (true, line_trimmed.to_string())
@@ -152,13 +144,11 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
 pub fn list_apt_repos() -> Result<serde_json::Value, String> {
   let mut all_repos: Vec<AptRepository> = Vec::new();
 
-  // Parse /etc/apt/sources.list
   let base = PathBuf::from("/etc/apt/sources.list");
   if base.exists() {
     all_repos.extend(parse_sources_file(&base));
   }
 
-  // Parse /etc/apt/sources.list.d/*
   if let Ok(dir) = fs::read_dir("/etc/apt/sources.list.d") {
     for entry in dir.flatten() {
       let path = entry.path();
@@ -176,7 +166,6 @@ pub fn list_apt_repos() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, String> {
-  // Parse the id to get file path and line number
   let parts: Vec<&str> = id.rsplitn(2, ':').collect();
   if parts.len() != 2 {
     return Err("Invalid repository ID".to_string());
@@ -190,15 +179,11 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
     return Err("Repository file not found".to_string());
   }
 
-  // Read current content
   let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
   let lines: Vec<&str> = content.lines().collect();
-
-  // Determine file format
   let is_deb822 = path.extension().map_or(false, |ext| ext == "sources");
 
   let new_content = if is_deb822 {
-    // Handle DEB822 format - need to add or modify Enabled: field
     let mut result_lines: Vec<String> = Vec::new();
     let mut in_target_stanza = false;
     let mut found_enabled_field = false;
@@ -208,9 +193,7 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
       let line_trimmed = line.trim();
 
       if line_trimmed.is_empty() {
-        // End of stanza
         if in_target_stanza && !found_enabled_field {
-          // Insert Enabled field at the start of the stanza
           result_lines.insert(stanza_start, format!("Enabled: {}", if enabled { "yes" } else { "no" }));
         }
         in_target_stanza = false;
@@ -234,34 +217,28 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
       }
     }
 
-    // Handle last stanza if file doesn't end with empty line
     if in_target_stanza && !found_enabled_field {
       result_lines.insert(stanza_start, format!("Enabled: {}", if enabled { "yes" } else { "no" }));
     }
 
     result_lines.join("\n")
   } else {
-    // Handle traditional sources.list format
     let mut result_lines: Vec<String> = Vec::new();
 
     for (idx, line) in lines.iter().enumerate() {
       if idx == line_number {
         let line_trimmed = line.trim();
         if enabled {
-          // Enable: remove leading # if present
           if line_trimmed.starts_with('#') {
             let uncommented = line_trimmed.trim_start_matches('#').trim();
             result_lines.push(uncommented.to_string());
           } else {
             result_lines.push(line.to_string());
           }
+        } else if !line_trimmed.starts_with('#') {
+          result_lines.push(format!("# {}", line_trimmed));
         } else {
-          // Disable: add # if not present
-          if !line_trimmed.starts_with('#') {
-            result_lines.push(format!("# {}", line_trimmed));
-          } else {
-            result_lines.push(line.to_string());
-          }
+          result_lines.push(line.to_string());
         }
       } else {
         result_lines.push(line.to_string());
@@ -271,7 +248,6 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
     result_lines.join("\n")
   };
 
-  // Write using pkexec for root privileges
   let temp_file = std::env::temp_dir().join("apt_repo_temp");
   fs::write(&temp_file, &new_content).map_err(|e| e.to_string())?;
 
@@ -280,7 +256,6 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
     .output()
     .map_err(|e| e.to_string())?;
 
-  // Clean up temp file
   let _ = fs::remove_file(&temp_file);
 
   if output.status.success() {

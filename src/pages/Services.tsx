@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronUp, ChevronDown, User, Monitor, X } from 'lucide-react'
 import Pagination from '../components/Pagination'
@@ -28,10 +28,7 @@ export default function Services() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      fetchServices()
-    }, 50)
-    return () => clearTimeout(timeoutId)
+    fetchServices()
   }, [])
 
   const fetchServices = async () => {
@@ -73,25 +70,27 @@ export default function Services() {
     else { setSortKey(key); setSortDir(key === 'name' || key === 'description' ? 'asc' : 'desc') }
   }
 
-  const filteredServices = services
-    .filter((service) => {
-      if (filterType === 'system') return !service.is_user_service
-      if (filterType === 'user') return service.is_user_service
-      return true
-    })
-    .filter(
-      (service) =>
-        service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        service.description.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-    .sort((a, b) => {
-      const mul = sortDir === 'asc' ? 1 : -1
-      if (sortKey === 'status') return mul * (Number(a.is_running) - Number(b.is_running))
-      if (sortKey === 'type') return mul * (Number(a.is_user_service) - Number(b.is_user_service))
-      if (sortKey === 'boot') return mul * (Number(a.is_enabled) - Number(b.is_enabled))
-      if (sortKey === 'description') return mul * (a.description || '').localeCompare(b.description || '')
-      return mul * a.name.localeCompare(b.name)
-    })
+  const filteredServices = useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return services
+      .filter((service) => {
+        if (filterType === 'system') return !service.is_user_service
+        if (filterType === 'user') return service.is_user_service
+        return true
+      })
+      .filter((service) =>
+        service.name.toLowerCase().includes(q) ||
+        service.description.toLowerCase().includes(q)
+      )
+      .sort((a, b) => {
+        const mul = sortDir === 'asc' ? 1 : -1
+        if (sortKey === 'status') return mul * (Number(a.is_running) - Number(b.is_running))
+        if (sortKey === 'type') return mul * (Number(a.is_user_service) - Number(b.is_user_service))
+        if (sortKey === 'boot') return mul * (Number(a.is_enabled) - Number(b.is_enabled))
+        if (sortKey === 'description') return mul * (a.description || '').localeCompare(b.description || '')
+        return mul * a.name.localeCompare(b.name)
+      })
+  }, [services, searchQuery, filterType, sortKey, sortDir])
 
   const totalPages = Math.ceil(filteredServices.length / ITEMS_PER_PAGE)
   const paginatedServices = filteredServices.slice(

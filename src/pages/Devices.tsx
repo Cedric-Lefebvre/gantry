@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import {
   ChevronDown, ChevronRight, HardDrive, Usb, Wifi, Monitor,
@@ -433,6 +433,41 @@ export default function Devices() {
     }
   }
 
+  const { filteredBlock, filteredPci, filteredUsb, filteredNetwork, filteredInput, pciGroups, usbGroups, networkGroups, inputGroups, searching, q } = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    const searching = q.length > 0
+
+    const matchBlock = (d: BlockDevice): boolean => {
+      if (!q) return true
+      if ([d.name, d.model, d.vendor, d.fstype, d.mountpoint, d.tran, d.serial, d.size].some(v => v && v.toLowerCase().includes(q))) return true
+      return d.children?.some(matchBlock) ?? false
+    }
+
+    const filteredBlock = blockDevices.filter(matchBlock)
+    const filteredPci = pciDevices
+      .filter(d => !q || [d.name, d.vendor, d.category, d.slot, d.device_type].some(v => v.toLowerCase().includes(q)))
+      .filter(d => searching || !/^Device [0-9a-fA-F]{4}$/.test(d.name))
+    const filteredUsb = usbDevices.filter(d => !q || [d.name, d.vendor_id, d.product_id, d.device_type].some(v => v.toLowerCase().includes(q)))
+    const filteredNetwork = networkDevices.filter(d => !q || [d.name, d.mac_address, d.device_type, d.state, ...d.ip_addresses].some(v => v.toLowerCase().includes(q)))
+    const filteredInput = inputDevices.filter(d => !q || [d.name, d.device_type, d.path].some(v => v.toLowerCase().includes(q)))
+
+    return {
+      q,
+      searching,
+      filteredBlock,
+      filteredPci,
+      filteredUsb,
+      filteredNetwork,
+      filteredInput,
+      pciGroups: groupByType(filteredPci),
+      usbGroups: groupByType(filteredUsb),
+      networkGroups: groupByType(filteredNetwork),
+      inputGroups: groupByType(filteredInput),
+    }
+  }, [search, blockDevices, pciDevices, usbDevices, networkDevices, inputDevices])
+
+  const forceState = searching ? true : globalOpen
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -446,30 +481,6 @@ export default function Devices() {
       </div>
     )
   }
-
-  const q = search.toLowerCase().trim()
-  const searching = q.length > 0
-
-  const matchBlock = (d: BlockDevice): boolean => {
-    if (!q) return true
-    if ([d.name, d.model, d.vendor, d.fstype, d.mountpoint, d.tran, d.serial, d.size].some(v => v && v.toLowerCase().includes(q))) return true
-    return d.children?.some(matchBlock) ?? false
-  }
-
-  const filteredBlock = blockDevices.filter(matchBlock)
-  const filteredPci = pciDevices
-    .filter(d => !q || [d.name, d.vendor, d.category, d.slot, d.device_type].some(v => v.toLowerCase().includes(q)))
-    .filter(d => searching || !/^Device [0-9a-fA-F]{4}$/.test(d.name))
-  const filteredUsb = usbDevices.filter(d => !q || [d.name, d.vendor_id, d.product_id, d.device_type].some(v => v.toLowerCase().includes(q)))
-  const filteredNetwork = networkDevices.filter(d => !q || [d.name, d.mac_address, d.device_type, d.state, ...d.ip_addresses].some(v => v.toLowerCase().includes(q)))
-  const filteredInput = inputDevices.filter(d => !q || [d.name, d.device_type, d.path].some(v => v.toLowerCase().includes(q)))
-
-  const pciGroups = groupByType(filteredPci)
-  const usbGroups = groupByType(filteredUsb)
-  const networkGroups = groupByType(filteredNetwork)
-  const inputGroups = groupByType(filteredInput)
-
-  const forceState = searching ? true : globalOpen
 
   return (
     <div className="space-y-4">
@@ -588,8 +599,8 @@ export default function Devices() {
         <DeviceSection title="PCI Devices" icon={<Cpu size={18} />} count={filteredPci.length} forceOpen={forceState}>
           {pciGroups.map(([type, devices]) => (
             <DeviceSubGroup key={type} type={type} count={devices.length} forceOpen={forceState}>
-              {devices.map((dev, i) => (
-                <PciDeviceRow key={i} dev={dev} />
+              {devices.map((dev) => (
+                <PciDeviceRow key={dev.slot} dev={dev} />
               ))}
             </DeviceSubGroup>
           ))}
@@ -612,8 +623,8 @@ export default function Devices() {
         <DeviceSection title="USB Devices" icon={<Usb size={18} />} count={filteredUsb.length} forceOpen={forceState}>
           {usbGroups.map(([type, devices]) => (
             <DeviceSubGroup key={type} type={type} count={devices.length} forceOpen={forceState}>
-              {devices.map((dev, i) => (
-                <UsbDeviceRow key={i} dev={dev} />
+              {devices.map((dev) => (
+                <UsbDeviceRow key={`${dev.bus}-${dev.device}`} dev={dev} />
               ))}
             </DeviceSubGroup>
           ))}
@@ -624,8 +635,8 @@ export default function Devices() {
         <DeviceSection title="Input Devices" icon={<Keyboard size={18} />} count={filteredInput.length} forceOpen={forceState}>
           {inputGroups.map(([type, devices]) => (
             <DeviceSubGroup key={type} type={type} count={devices.length} forceOpen={forceState}>
-              {devices.map((dev, i) => (
-                <InputDeviceRow key={i} dev={dev} />
+              {devices.map((dev) => (
+                <InputDeviceRow key={dev.path} dev={dev} />
               ))}
             </DeviceSubGroup>
           ))}

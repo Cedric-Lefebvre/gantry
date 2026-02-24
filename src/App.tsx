@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense, lazy, createElement } from 'react'
+import { useState, useEffect, Suspense, lazy } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import './index.css'
 import Layout from './components/Layout'
@@ -10,15 +10,12 @@ import StartupApps from './pages/StartupApps'
 import Resources from './pages/Resources'
 import Logs from './pages/Logs'
 import Scripts from './pages/Scripts'
-import { PageType } from './types'
+import { PageType, AppSettings } from './types'
+import { applyTheme } from './utils/theme'
 import { DEFAULT_PAGE } from './constants'
 import { ResourceMonitorContext, useResourceMonitorProvider } from './hooks/useResourceMonitor'
 
 const Services = lazy(() => import('./pages/Services'))
-
-interface AppSettings {
-  theme: string
-}
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>(DEFAULT_PAGE)
@@ -38,14 +35,6 @@ function App() {
       applyTheme(saved || 'light')
     } finally {
       setThemeLoaded(true)
-    }
-  }
-
-  const applyTheme = (theme: string) => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
     }
   }
 

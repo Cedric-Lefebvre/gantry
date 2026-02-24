@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChevronDown, ChevronRight, ChevronUp, Search, Trash2, X, Layers, RefreshCw } from 'lucide-react'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
@@ -167,6 +167,7 @@ export default function Processes() {
   const [sortKey, setSortKey] = useState<'name' | 'cpu' | 'memory'>('memory')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [killError, setKillError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchProcesses()
@@ -194,7 +195,7 @@ export default function Processes() {
       await invoke('kill_process', { pid })
       await fetchProcesses()
     } catch (err) {
-      alert(`Failed to kill process: ${err}`)
+      setKillError(`Failed to kill process: ${err}`)
     }
   }
 
@@ -203,7 +204,7 @@ export default function Processes() {
       await invoke('kill_process_group', { pids })
       await fetchProcesses()
     } catch (err) {
-      alert(`Failed to kill processes: ${err}`)
+      setKillError(`Failed to kill processes: ${err}`)
     }
   }
 
@@ -212,23 +213,26 @@ export default function Processes() {
     else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc') }
   }
 
-  const filteredGroups = groups.filter(g =>
-    g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    g.processes.some(p => p.pid.toString().includes(searchQuery))
-  ).sort((a, b) => {
-    const mul = sortDir === 'asc' ? 1 : -1
-    if (sortKey === 'name') return mul * a.name.localeCompare(b.name)
-    if (sortKey === 'cpu') return mul * (a.total_cpu - b.total_cpu)
-    return mul * (a.total_memory - b.total_memory)
-  })
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return groups.filter(g =>
+      g.name.toLowerCase().includes(q) ||
+      g.processes.some(p => p.pid.toString().includes(searchQuery))
+    ).sort((a, b) => {
+      const mul = sortDir === 'asc' ? 1 : -1
+      if (sortKey === 'name') return mul * a.name.localeCompare(b.name)
+      if (sortKey === 'cpu') return mul * (a.total_cpu - b.total_cpu)
+      return mul * (a.total_memory - b.total_memory)
+    })
+  }, [groups, searchQuery, sortKey, sortDir])
+
+  const totalProcessCount = useMemo(() => groups.reduce((sum, g) => sum + g.count, 0), [groups])
 
   const totalPages = Math.ceil(filteredGroups.length / ITEMS_PER_PAGE)
   const paginatedGroups = filteredGroups.slice(
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   )
-
-  const totalProcessCount = groups.reduce((sum, g) => sum + g.count, 0)
 
   useEffect(() => {
     setCurrentPage(1)
@@ -250,6 +254,14 @@ export default function Processes() {
 
   return (
     <div className="space-y-4">
+      {killError && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
+          <span>{killError}</span>
+          <button onClick={() => setKillError(null)} className="shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-200">
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Processes</h1>
         <div className="flex items-center gap-3">
