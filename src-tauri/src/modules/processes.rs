@@ -5,6 +5,7 @@ use std::fs;
 use std::process::Command;
 use sysinfo::{System, RefreshKind, ProcessRefreshKind};
 
+#[cfg(target_os = "linux")]
 fn is_thread_group_leader(pid: u32) -> bool {
     if let Ok(content) = fs::read_to_string(format!("/proc/{}/status", pid)) {
         for line in content.lines() {
@@ -18,6 +19,12 @@ fn is_thread_group_leader(pid: u32) -> bool {
     true
 }
 
+#[cfg(target_os = "macos")]
+fn is_thread_group_leader(_pid: u32) -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
 fn get_process_private_mem(pid: u32) -> Option<u64> {
     let content = fs::read_to_string(format!("/proc/{}/statm", pid)).ok()?;
     let parts: Vec<&str> = content.split_whitespace().collect();
@@ -27,6 +34,11 @@ fn get_process_private_mem(pid: u32) -> Option<u64> {
         let private_pages = resident.saturating_sub(shared);
         return Some(private_pages * 4096);
     }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn get_process_private_mem(_pid: u32) -> Option<u64> {
     None
 }
 
@@ -220,9 +232,9 @@ mod tests {
         assert_eq!(memories, sorted, "process groups should be sorted by memory descending");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_get_process_private_mem_pid1() {
-        // PID 1 always exists on Linux; may be None if unreadable (permissions OK)
         let result = get_process_private_mem(1);
         if let Some(mem) = result {
             assert!(mem > 0, "private memory for PID 1 should be > 0");

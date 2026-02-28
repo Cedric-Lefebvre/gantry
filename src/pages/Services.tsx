@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Play, Square, RotateCw, Search, Power, PowerOff, ChevronUp, ChevronDown, User, Monitor, X } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { usePlatform } from '../hooks/usePlatform'
 
 interface ServiceInfo {
   name: string
@@ -17,6 +18,10 @@ interface ServiceInfo {
 const ITEMS_PER_PAGE = 50
 
 export default function Services() {
+  const platform = usePlatform()
+  const systemLabel = platform === 'macos' ? 'Daemon' : 'System'
+  const userLabel = platform === 'macos' ? 'Agent' : 'User'
+
   const [services, setServices] = useState<ServiceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -161,7 +166,7 @@ export default function Services() {
             }`}
           >
             <Monitor size={14} />
-            System
+            {systemLabel}
           </button>
           <button
             onClick={() => setFilterType('user')}
@@ -172,7 +177,7 @@ export default function Services() {
             }`}
           >
             <User size={14} />
-            User
+            {userLabel}
           </button>
         </div>
       </div>
@@ -257,6 +262,7 @@ export default function Services() {
                         }`}
                       >
                         {service.is_user_service ? <User size={10} /> : <Monitor size={10} />}
+                        <span className="sr-only">{service.is_user_service ? userLabel : systemLabel}</span>
                       </span>
                     </td>
 

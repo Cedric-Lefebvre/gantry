@@ -2,7 +2,7 @@
 
 fn print_help() {
   println!("gantry {}", env!("CARGO_PKG_VERSION"));
-  println!("A lightweight Linux system management app");
+  println!("A lightweight system management app");
   println!();
   println!("Usage: gantry [OPTIONS]");
   println!();

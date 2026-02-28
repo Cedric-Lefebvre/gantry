@@ -10,20 +10,23 @@ import StartupApps from './pages/StartupApps'
 import Resources from './pages/Resources'
 import Logs from './pages/Logs'
 import Scripts from './pages/Scripts'
-import { PageType, AppSettings } from './types'
+import { PageType, AppSettings, Platform } from './types'
 import { applyTheme } from './utils/theme'
 import { DEFAULT_PAGE } from './constants'
 import { ResourceMonitorContext, useResourceMonitorProvider } from './hooks/useResourceMonitor'
+import { PlatformContext } from './hooks/usePlatform'
 
 const Services = lazy(() => import('./pages/Services'))
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>(DEFAULT_PAGE)
   const [themeLoaded, setThemeLoaded] = useState(false)
+  const [platform, setPlatform] = useState<Platform>('linux')
   const monitorData = useResourceMonitorProvider()
 
   useEffect(() => {
     loadTheme()
+    loadPlatform()
   }, [])
 
   const loadTheme = async () => {
@@ -35,6 +38,14 @@ function App() {
       applyTheme(saved || 'light')
     } finally {
       setThemeLoaded(true)
+    }
+  }
+
+  const loadPlatform = async () => {
+    try {
+      const p = await invoke<Platform>('get_platform')
+      setPlatform(p)
+    } catch {
     }
   }
 
@@ -90,11 +101,13 @@ function App() {
   }
 
   return (
-    <ResourceMonitorContext.Provider value={monitorData}>
-      <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
-        {renderPage()}
-      </Layout>
-    </ResourceMonitorContext.Provider>
+    <PlatformContext.Provider value={platform}>
+      <ResourceMonitorContext.Provider value={monitorData}>
+        <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
+          {renderPage()}
+        </Layout>
+      </ResourceMonitorContext.Provider>
+    </PlatformContext.Provider>
   )
 }
 

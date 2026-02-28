@@ -30,6 +30,7 @@ fn get_disks() -> &'static Mutex<Disks> {
     })
 }
 
+#[cfg(target_os = "linux")]
 fn get_cpu_model() -> &'static str {
     CPU_MODEL.get_or_init(|| {
         if let Ok(content) = fs::read_to_string("/proc/cpuinfo") {
@@ -42,6 +43,20 @@ fn get_cpu_model() -> &'static str {
             }
         }
         "Unknown".to_string()
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn get_cpu_model() -> &'static str {
+    CPU_MODEL.get_or_init(|| {
+        Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Unknown".to_string())
     })
 }
 
@@ -66,6 +81,7 @@ pub fn get_system_overview() -> Result<serde_json::Value, String> {
     Ok(json!({"cpus": cpus, "memory": mem}))
 }
 
+#[cfg(target_os = "linux")]
 fn get_gpu_name_from_pci(device_path: &std::path::Path) -> String {
     if let Ok(uevent) = fs::read_to_string(device_path.join("uevent")) {
         for line in uevent.lines() {
@@ -83,6 +99,7 @@ fn get_gpu_name_from_pci(device_path: &std::path::Path) -> String {
     "GPU".to_string()
 }
 
+#[cfg(target_os = "linux")]
 fn get_gpu_info() -> serde_json::Value {
     let mut gpus = Vec::new();
 
@@ -173,13 +190,60 @@ fn get_gpu_info() -> serde_json::Value {
         }
     }
 
-    if gpus.is_empty() {
-        json!(null)
-    } else {
-        json!(gpus)
-    }
+    if gpus.is_empty() { json!(null) } else { json!(gpus) }
 }
 
+#[cfg(target_os = "macos")]
+fn get_gpu_info() -> serde_json::Value {
+    let output = Command::new("system_profiler")
+        .args(["SPDisplaysDataType", "-json"])
+        .output();
+
+    let Ok(out) = output else { return json!(null) };
+    let Ok(text) = String::from_utf8(out.stdout) else { return json!(null) };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else { return json!(null) };
+
+    let displays = parsed["SPDisplaysDataType"].as_array();
+    let Some(displays) = displays else { return json!(null) };
+
+    let gpus: Vec<_> = displays.iter().filter_map(|d| {
+        let name = d["spdisplays_ndrvs"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|n| n["_name"].as_str())
+            .or_else(|| d["_name"].as_str())
+            .unwrap_or("Unknown GPU")
+            .to_string();
+
+        let vendor = d["spdisplays_vendor"].as_str().unwrap_or("").to_string();
+
+        let vram_bytes = d["spdisplays_vram"]
+            .as_str()
+            .and_then(|v| {
+                let parts: Vec<&str> = v.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let mb: u64 = parts[0].parse().ok()?;
+                    Some(mb * 1024 * 1024)
+                } else {
+                    None
+                }
+            });
+
+        Some(json!({
+            "name": name,
+            "vendor": vendor,
+            "usage": null,
+            "memory_used": null,
+            "memory_total": vram_bytes,
+            "temperature": null,
+            "fan_speed": null,
+        }))
+    }).collect();
+
+    if gpus.is_empty() { json!(null) } else { json!(gpus) }
+}
+
+#[cfg(target_os = "linux")]
 fn resolve_hwmon_device_name(hwmon_path: &std::path::Path, driver_name: &str) -> String {
     if driver_name == "nvme" {
         let path_str = fs::canonicalize(hwmon_path)
@@ -205,6 +269,7 @@ fn resolve_hwmon_device_name(hwmon_path: &std::path::Path, driver_name: &str) ->
     String::new()
 }
 
+#[cfg(target_os = "linux")]
 fn get_thermal_info() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
     let mut temps = Vec::new();
     let mut fans = Vec::new();
@@ -261,22 +326,27 @@ fn get_thermal_info() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
     (temps, fans)
 }
 
+#[cfg(target_os = "macos")]
+fn get_thermal_info() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    (vec![], vec![])
+}
+
 fn get_network_stats() -> serde_json::Value {
     let mut nets = get_networks().lock().unwrap();
     nets.refresh();
 
-    let mut stats = Vec::new();
-    for (name, data) in nets.iter() {
-        stats.push(json!({
+    let stats: Vec<_> = nets.iter().map(|(name, data)| {
+        json!({
             "name": name,
             "rx_bytes": data.total_received(),
             "tx_bytes": data.total_transmitted(),
-        }));
-    }
+        })
+    }).collect();
 
     json!(stats)
 }
 
+#[cfg(target_os = "linux")]
 fn get_disk_io() -> Vec<serde_json::Value> {
     let mut io_stats = Vec::new();
 
@@ -310,58 +380,12 @@ fn get_disk_io() -> Vec<serde_json::Value> {
     io_stats
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_os_info() {
-        let result = get_os_info();
-        assert!(result.is_ok(), "get_os_info failed: {:?}", result.err());
-        let info = result.unwrap();
-        assert!(!info["hostname"].as_str().unwrap_or("").is_empty(), "hostname should not be empty");
-        assert!(!info["arch"].as_str().unwrap_or("").is_empty(), "arch should not be empty");
-        assert!(!info["kernel"].as_str().unwrap_or("").is_empty(), "kernel should not be empty");
-        assert!(!info["os_pretty"].as_str().unwrap_or("").is_empty(), "os_pretty should not be empty");
-    }
-
-    #[test]
-    fn test_get_resources_structure() {
-        let result = get_resources();
-        assert!(result.is_ok(), "get_resources failed: {:?}", result.err());
-        let res = result.unwrap();
-        let cpu = res["cpu"].as_f64().expect("cpu field should be a number");
-        assert!(cpu >= 0.0 && cpu <= 100.0, "cpu usage should be between 0 and 100, got {}", cpu);
-        assert!(res["cpu_count"].as_u64().unwrap_or(0) > 0, "cpu_count should be > 0");
-        assert!(!res["cpu_model"].as_str().unwrap_or("").is_empty(), "cpu_model should not be empty");
-        assert!(res["memory"]["total"].as_u64().unwrap_or(0) > 0, "memory total should be > 0");
-        assert!(res["memory"]["used"].as_u64().is_some(), "memory used should be present");
-        assert!(res["per_cpu"].as_array().map_or(0, |v| v.len()) > 0, "per_cpu should have entries");
-        assert!(res["load_avg"].as_array().map_or(0, |v| v.len()) == 3, "load_avg should have 3 values");
-        assert!(res["uptime"].as_u64().unwrap_or(0) > 0, "uptime should be > 0");
-    }
-
-    #[test]
-    fn test_get_system_overview() {
-        let result = get_system_overview();
-        assert!(result.is_ok(), "get_system_overview failed: {:?}", result.err());
-        let overview = result.unwrap();
-        assert!(overview["cpus"].as_array().map_or(0, |v| v.len()) > 0, "should have at least one CPU");
-        assert!(overview["memory"]["total"].as_u64().unwrap_or(0) > 0, "memory total should be > 0");
-    }
-
-    #[test]
-    fn test_get_resources_disk_info() {
-        let result = get_resources().unwrap();
-        let disks = result["disks"].as_array().expect("disks should be an array");
-        // Most systems have at least one disk with total_space > 0
-        for disk in disks {
-            assert!(disk["total_space"].as_u64().unwrap_or(0) > 0, "disk total_space should be > 0");
-            assert!(disk["mount_point"].as_str().is_some(), "disk mount_point should be present");
-        }
-    }
+#[cfg(target_os = "macos")]
+fn get_disk_io() -> Vec<serde_json::Value> {
+    vec![]
 }
 
+#[cfg(target_os = "linux")]
 fn get_load_average() -> (f64, f64, f64) {
     if let Ok(content) = fs::read_to_string("/proc/loadavg") {
         let parts: Vec<&str> = content.split_whitespace().collect();
@@ -375,10 +399,58 @@ fn get_load_average() -> (f64, f64, f64) {
     (0.0, 0.0, 0.0)
 }
 
+#[cfg(target_os = "macos")]
+fn get_load_average() -> (f64, f64, f64) {
+    let output = Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output();
+
+    let Ok(out) = output else { return (0.0, 0.0, 0.0) };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let trimmed = text.trim().trim_start_matches('{').trim_end_matches('}');
+    let parts: Vec<f64> = trimmed
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if parts.len() >= 3 {
+        (parts[0], parts[1], parts[2])
+    } else {
+        (0.0, 0.0, 0.0)
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn get_uptime_seconds() -> u64 {
     if let Ok(content) = fs::read_to_string("/proc/uptime") {
         if let Some(secs_str) = content.split_whitespace().next() {
             return secs_str.parse::<f64>().unwrap_or(0.0) as u64;
+        }
+    }
+    0
+}
+
+#[cfg(target_os = "macos")]
+fn get_uptime_seconds() -> u64 {
+    let output = Command::new("sysctl")
+        .args(["-n", "kern.boottime"])
+        .output();
+
+    let Ok(out) = output else { return 0 };
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.starts_with("sec =") || part.starts_with("{ sec =") {
+            if let Some(val) = part.split('=').nth(1) {
+                if let Ok(boot_sec) = val.trim().parse::<u64>() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    return now.saturating_sub(boot_sec);
+                }
+            }
         }
     }
     0
@@ -396,6 +468,7 @@ pub fn save_report_file(content: String, filename: String) -> Result<String, Str
     Ok(path.to_string_lossy().to_string())
 }
 
+#[cfg(target_os = "linux")]
 #[tauri::command]
 pub fn get_os_info() -> Result<serde_json::Value, String> {
     let mut os_name = String::from("Linux");
@@ -413,19 +486,15 @@ pub fn get_os_info() -> Result<serde_json::Value, String> {
         }
     }
 
-    let mut kernel = String::new();
-    if let Ok(content) = fs::read_to_string("/proc/version") {
-        if let Some(ver_part) = content.split_whitespace().nth(2) {
-            kernel = ver_part.to_string();
-        }
-    }
+    let kernel = fs::read_to_string("/proc/version")
+        .ok()
+        .and_then(|c| c.split_whitespace().nth(2).map(|s| s.to_string()))
+        .unwrap_or_default();
 
     let hostname = fs::read_to_string("/proc/sys/kernel/hostname")
         .unwrap_or_default()
         .trim()
         .to_string();
-
-    let arch = std::env::consts::ARCH.to_string();
 
     Ok(json!({
         "os_name": os_name,
@@ -433,8 +502,57 @@ pub fn get_os_info() -> Result<serde_json::Value, String> {
         "os_pretty": if os_pretty.is_empty() { format!("{} {}", os_name, os_version) } else { os_pretty },
         "kernel": kernel,
         "hostname": hostname,
-        "arch": arch,
+        "arch": std::env::consts::ARCH,
     }))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn get_os_info() -> Result<serde_json::Value, String> {
+    let product_name = Command::new("sw_vers")
+        .arg("-productName")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "macOS".to_string());
+
+    let product_version = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let kernel = Command::new("uname")
+        .arg("-r")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let hostname = Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "os_name": product_name,
+        "os_version": product_version,
+        "os_pretty": format!("{} {}", product_name, product_version),
+        "kernel": kernel,
+        "hostname": hostname,
+        "arch": std::env::consts::ARCH,
+    }))
+}
+
+#[tauri::command]
+pub fn get_platform() -> &'static str {
+    std::env::consts::OS
 }
 
 #[tauri::command]
@@ -496,4 +614,65 @@ pub fn get_resources() -> Result<serde_json::Value, String> {
         "network": network,
         "disk_io": disk_io,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_os_info() {
+        let result = get_os_info();
+        assert!(result.is_ok(), "get_os_info failed: {:?}", result.err());
+        let info = result.unwrap();
+        assert!(!info["hostname"].as_str().unwrap_or("").is_empty(), "hostname should not be empty");
+        assert!(!info["arch"].as_str().unwrap_or("").is_empty(), "arch should not be empty");
+        assert!(!info["kernel"].as_str().unwrap_or("").is_empty(), "kernel should not be empty");
+        assert!(!info["os_pretty"].as_str().unwrap_or("").is_empty(), "os_pretty should not be empty");
+    }
+
+    #[test]
+    fn test_get_resources_structure() {
+        let result = get_resources();
+        assert!(result.is_ok(), "get_resources failed: {:?}", result.err());
+        let res = result.unwrap();
+        let cpu = res["cpu"].as_f64().expect("cpu field should be a number");
+        assert!(cpu >= 0.0 && cpu <= 100.0, "cpu usage should be between 0 and 100, got {}", cpu);
+        assert!(res["cpu_count"].as_u64().unwrap_or(0) > 0, "cpu_count should be > 0");
+        assert!(!res["cpu_model"].as_str().unwrap_or("").is_empty(), "cpu_model should not be empty");
+        assert!(res["memory"]["total"].as_u64().unwrap_or(0) > 0, "memory total should be > 0");
+        assert!(res["memory"]["used"].as_u64().is_some(), "memory used should be present");
+        assert!(res["per_cpu"].as_array().map_or(0, |v| v.len()) > 0, "per_cpu should have entries");
+        assert!(res["load_avg"].as_array().map_or(0, |v| v.len()) == 3, "load_avg should have 3 values");
+        assert!(res["uptime"].as_u64().unwrap_or(0) > 0, "uptime should be > 0");
+    }
+
+    #[test]
+    fn test_get_system_overview() {
+        let result = get_system_overview();
+        assert!(result.is_ok(), "get_system_overview failed: {:?}", result.err());
+        let overview = result.unwrap();
+        assert!(overview["cpus"].as_array().map_or(0, |v| v.len()) > 0, "should have at least one CPU");
+        assert!(overview["memory"]["total"].as_u64().unwrap_or(0) > 0, "memory total should be > 0");
+    }
+
+    #[test]
+    fn test_get_resources_disk_info() {
+        let result = get_resources().unwrap();
+        let disks = result["disks"].as_array().expect("disks should be an array");
+        for disk in disks {
+            assert!(disk["total_space"].as_u64().unwrap_or(0) > 0, "disk total_space should be > 0");
+            assert!(disk["mount_point"].as_str().is_some(), "disk mount_point should be present");
+        }
+    }
+
+    #[test]
+    fn test_get_platform() {
+        let platform = get_platform();
+        assert!(
+            platform == "linux" || platform == "macos" || platform == "windows",
+            "platform should be a known OS name, got: {}",
+            platform
+        );
+    }
 }

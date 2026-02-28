@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RotateCw, Plus, Trash2, Search } from 'lucide-react'
 import { addAptRepo, deleteAptRepo } from '../api/config'
+import { usePlatform } from '../hooks/usePlatform'
 
 interface Repository {
   id: string
@@ -16,6 +17,9 @@ interface Repository {
 }
 
 export default function Repositories() {
+  const platform = usePlatform()
+  const isMac = platform === 'macos'
+
   const [repositories, setRepositories] = useState<Repository[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -100,7 +104,9 @@ export default function Repositories() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">APT Repositories</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+          {isMac ? 'Homebrew Taps' : 'APT Repositories'}
+        </h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setNewRepoLine(''); setShowAddModal(true) }}
@@ -145,43 +151,62 @@ export default function Repositories() {
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
             {filteredRepositories.map((repo) => (
               <div key={repo.id} className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                <button
-                  onClick={() => toggleRepositoryEnabled(repo)}
-                  disabled={togglingId !== null}
-                  className={`flex-shrink-0 w-12 h-6 rounded-full transition ${
-                    repo.enabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
-                  } flex items-center px-1 ${togglingId === repo.id ? 'opacity-50' : ''}`}
-                >
-                  {togglingId === repo.id ? (
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
-                  ) : (
-                    <div
-                      className={`w-5 h-5 bg-white rounded-full transition-all duration-200 ${
-                        repo.enabled ? 'ml-auto' : 'ml-0'
-                      }`}
-                    />
-                  )}
-                </button>
+                {!isMac && (
+                  <button
+                    onClick={() => toggleRepositoryEnabled(repo)}
+                    disabled={togglingId !== null}
+                    className={`flex-shrink-0 w-12 h-6 rounded-full transition ${
+                      repo.enabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                    } flex items-center px-1 ${togglingId === repo.id ? 'opacity-50' : ''}`}
+                  >
+                    {togglingId === repo.id ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" />
+                    ) : (
+                      <div
+                        className={`w-5 h-5 bg-white rounded-full transition-all duration-200 ${
+                          repo.enabled ? 'ml-auto' : 'ml-0'
+                        }`}
+                      />
+                    )}
+                  </button>
+                )}
 
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-mono text-gray-900 dark:text-gray-100 truncate">
-                    {repo.types} {repo.uris} {repo.suites}
-                  </div>
-                  <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                    {repo.components}
-                    <span className="ml-2 text-gray-400 dark:text-gray-500">({repo.file_path})</span>
-                  </div>
+                  {isMac ? (
+                    <>
+                      <div className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 truncate">
+                        {repo.original_line}
+                      </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 truncate">
+                        {repo.uris}
+                        {repo.suites && <span className="ml-2 text-gray-400">· {repo.suites} formulae</span>}
+                        {repo.components && <span className="ml-2 text-gray-400">· {repo.components} casks</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-sm font-mono text-gray-900 dark:text-gray-100 truncate">
+                        {repo.types} {repo.uris} {repo.suites}
+                      </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                        {repo.components}
+                        <span className="ml-2 text-gray-400 dark:text-gray-500">({repo.file_path})</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <span
-                  className={`text-xs font-semibold px-2 py-1 rounded whitespace-nowrap ${
-                    repo.enabled
-                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  {repo.enabled ? 'Enabled' : 'Disabled'}
-                </span>
+                {!isMac && (
+                  <span
+                    className={`text-xs font-semibold px-2 py-1 rounded whitespace-nowrap ${
+                      repo.enabled
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {repo.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                )}
 
                 <button
                   onClick={() => setDeleteConfirm(repo.id)}
@@ -197,25 +222,33 @@ export default function Repositories() {
 
       {repositories.length > 0 && (
         <div className="text-sm text-gray-600 dark:text-gray-400">
-          {enabledCount} of {repositories.length} repositories enabled
+          {isMac
+            ? `${repositories.length} tap${repositories.length !== 1 ? 's' : ''} installed`
+            : `${enabledCount} of ${repositories.length} repositories enabled`}
         </div>
       )}
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-lg mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
-            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">Add APT Repository</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+              {isMac ? 'Add Homebrew Tap' : 'Add APT Repository'}
+            </h2>
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Repository Line</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {isMac ? 'Tap Name' : 'Repository Line'}
+              </label>
               <input
                 type="text"
                 value={newRepoLine}
                 onChange={e => setNewRepoLine(e.target.value)}
-                placeholder="deb http://example.com/repo focal main"
+                placeholder={isMac ? 'homebrew/cask-fonts' : 'deb http://example.com/repo focal main'}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Enter a complete APT repository line starting with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb-src</code>
+                {isMac
+                  ? 'Enter a Homebrew tap name, e.g. homebrew/cask-fonts or a GitHub repo owner/repo'
+                  : <>Enter a complete APT repository line starting with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb-src</code></>}
               </p>
             </div>
             <div className="flex justify-end gap-3 mt-6">
@@ -230,7 +263,7 @@ export default function Repositories() {
                 disabled={!newRepoLine.trim()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
-                Add Repository
+                {isMac ? 'Add Tap' : 'Add Repository'}
               </button>
             </div>
           </div>
@@ -241,8 +274,12 @@ export default function Repositories() {
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteConfirm(null)}>
             <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-sm mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">Delete Repository</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Are you sure you want to remove this repository?</p>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                {isMac ? 'Remove Tap' : 'Delete Repository'}
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                {isMac ? 'Are you sure you want to untap this?' : 'Are you sure you want to remove this repository?'}
+              </p>
               {repo && (
                 <p className="text-xs font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded p-2 mb-6 truncate">
                   {repo.types} {repo.uris} {repo.suites}

@@ -1,5 +1,7 @@
 export type PageType = 'settings' | 'devices' | 'processes' | 'repositories' | 'startup' | 'resources' | 'logs' | 'scripts' | 'services'
 
+export type Platform = 'linux' | 'macos' | 'windows'
+
 export interface AppSettings {
   theme: string
 }

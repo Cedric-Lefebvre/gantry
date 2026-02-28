@@ -15,6 +15,7 @@ pub struct ServiceInfo {
     pub is_user_service: bool,
 }
 
+#[cfg(target_os = "linux")]
 fn get_enabled_services(is_user: bool) -> HashSet<String> {
     let mut enabled = HashSet::new();
 
@@ -44,6 +45,7 @@ fn get_enabled_services(is_user: bool) -> HashSet<String> {
     enabled
 }
 
+#[cfg(target_os = "linux")]
 fn parse_services_output(stdout: &str, is_user: bool, enabled_services: &HashSet<String>) -> Vec<ServiceInfo> {
     let mut services = Vec::new();
 
@@ -91,7 +93,8 @@ fn parse_services_output(stdout: &str, is_user: bool, enabled_services: &HashSet
                 continue;
             }
 
-            let is_running = active_state == "active" && (sub_state == "running" || sub_state == "waiting" || sub_state == "exited");
+            let is_running = active_state == "active"
+                && (sub_state == "running" || sub_state == "waiting" || sub_state == "exited");
             let is_enabled = enabled_services.contains(&name);
 
             services.push(ServiceInfo {
@@ -108,6 +111,239 @@ fn parse_services_output(stdout: &str, is_user: bool, enabled_services: &HashSet
     }
 
     services
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn list_services() -> Result<serde_json::Value, String> {
+    let mut all_services: Vec<ServiceInfo> = Vec::new();
+
+    let system_enabled = get_enabled_services(false);
+    let user_enabled = get_enabled_services(true);
+
+    if let Ok(output) = Command::new("systemctl")
+        .args(["list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend"])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            all_services.extend(parse_services_output(&stdout, false, &system_enabled));
+        }
+    }
+
+    if let Ok(output) = Command::new("systemctl")
+        .args(["--user", "list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend"])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            all_services.extend(parse_services_output(&stdout, true, &user_enabled));
+        }
+    }
+
+    all_services.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(json!(all_services))
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemctl(action: &str, name: &str, is_user: bool) -> Result<serde_json::Value, String> {
+    let service = format!("{}.service", name);
+    let output = if is_user {
+        Command::new("systemctl")
+            .args(["--user", action, &service])
+            .output()
+    } else {
+        Command::new("pkexec")
+            .args(["systemctl", action, &service])
+            .output()
+    };
+
+    let output = output.map_err(|e| e.to_string())?;
+    let success = output.status.success();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(json!({
+        "success": success,
+        "error": if success { "" } else { &stderr }
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn launchagent_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = vec![
+        std::path::PathBuf::from("/Library/LaunchAgents"),
+        std::path::PathBuf::from("/Library/LaunchDaemons"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        dirs.insert(0, home.join("Library/LaunchAgents"));
+    }
+    dirs
+}
+
+#[cfg(target_os = "macos")]
+fn plist_run_at_load(path: &std::path::Path) -> bool {
+    plist::from_file::<plist::Value, _>(path)
+        .ok()
+        .and_then(|v| v.into_dictionary())
+        .and_then(|d| d.get("RunAtLoad").and_then(|v| v.as_boolean()))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn plist_is_disabled(path: &std::path::Path) -> bool {
+    plist::from_file::<plist::Value, _>(path)
+        .ok()
+        .and_then(|v| v.into_dictionary())
+        .and_then(|d| d.get("Disabled").and_then(|v| v.as_boolean()))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn list_services() -> Result<serde_json::Value, String> {
+    let mut label_to_path: std::collections::HashMap<String, (std::path::PathBuf, bool)> =
+        std::collections::HashMap::new();
+
+    let home_agents = dirs::home_dir().map(|h| h.join("Library/LaunchAgents"));
+
+    for dir in launchagent_dirs() {
+        let is_user = home_agents.as_ref().map_or(false, |h| dir == *h);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("plist") {
+                    continue;
+                }
+                if let Ok(val) = plist::from_file::<plist::Value, _>(&path) {
+                    if let Some(dict) = val.into_dictionary() {
+                        if let Some(label) = dict.get("Label").and_then(|v| v.as_string()) {
+                            label_to_path.insert(label.to_string(), (path, is_user));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let output = Command::new("launchctl")
+        .arg("list")
+        .output()
+        .map_err(|e| format!("Failed to run launchctl: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let mut running: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    for line in stdout.lines().skip(1) {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.len() == 3 {
+            let pid_str = parts[0].trim();
+            let label = parts[2].trim().to_string();
+            running.insert(label, pid_str != "-");
+        }
+    }
+
+    let mut services: Vec<ServiceInfo> = label_to_path
+        .iter()
+        .map(|(label, (path, is_user))| {
+            let is_running = running.get(label).copied().unwrap_or(false);
+            let is_enabled = plist_run_at_load(path) && !plist_is_disabled(path);
+
+            ServiceInfo {
+                name: label.clone(),
+                description: label.clone(),
+                load_state: if running.contains_key(label) { "loaded".to_string() } else { "not-found".to_string() },
+                active_state: if is_running { "active".to_string() } else { "inactive".to_string() },
+                sub_state: if is_running { "running".to_string() } else { "dead".to_string() },
+                is_running,
+                is_enabled,
+                is_user_service: *is_user,
+            }
+        })
+        .collect();
+
+    services.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(json!(services))
+}
+
+#[cfg(target_os = "macos")]
+fn run_launchctl(action: &str, name: &str, is_user: bool) -> Result<serde_json::Value, String> {
+    let uid = unsafe { libc::getuid() };
+    let domain = if is_user {
+        format!("gui/{}", uid)
+    } else {
+        "system".to_string()
+    };
+
+    let args: Vec<String> = match action {
+        "start" => vec!["kickstart".into(), format!("{}/{}", domain, name)],
+        "stop" => vec!["kill".into(), "SIGTERM".into(), format!("{}/{}", domain, name)],
+        "restart" => vec!["kickstart".into(), "-k".into(), format!("{}/{}", domain, name)],
+        "enable" => vec!["enable".into(), format!("{}/{}", domain, name)],
+        "disable" => vec!["disable".into(), format!("{}/{}", domain, name)],
+        _ => return Err(format!("Unknown launchctl action: {}", action)),
+    };
+
+    let run_privileged = !is_user && action != "enable" && action != "disable";
+
+    let output = if run_privileged {
+        let cmd = format!("launchctl {}", args.join(" "));
+        Command::new("osascript")
+            .args(["-e", &format!("do shell script \"{}\" with administrator privileges", cmd)])
+            .output()
+    } else {
+        Command::new("launchctl")
+            .args(&args)
+            .output()
+    };
+
+    let output = output.map_err(|e| e.to_string())?;
+    let success = output.status.success();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(json!({
+        "success": success,
+        "error": if success { "" } else { &stderr }
+    }))
+}
+
+#[tauri::command]
+pub fn start_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    { run_systemctl("start", &name, is_user) }
+    #[cfg(target_os = "macos")]
+    { run_launchctl("start", &name, is_user) }
+}
+
+#[tauri::command]
+pub fn stop_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    { run_systemctl("stop", &name, is_user) }
+    #[cfg(target_os = "macos")]
+    { run_launchctl("stop", &name, is_user) }
+}
+
+#[tauri::command]
+pub fn restart_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    { run_systemctl("restart", &name, is_user) }
+    #[cfg(target_os = "macos")]
+    { run_launchctl("restart", &name, is_user) }
+}
+
+#[tauri::command]
+pub fn enable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    { run_systemctl("enable", &name, is_user) }
+    #[cfg(target_os = "macos")]
+    { run_launchctl("enable", &name, is_user) }
+}
+
+#[tauri::command]
+pub fn disable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "linux")]
+    { run_systemctl("disable", &name, is_user) }
+    #[cfg(target_os = "macos")]
+    { run_launchctl("disable", &name, is_user) }
 }
 
 #[cfg(test)]
@@ -148,6 +384,7 @@ mod tests {
         assert_eq!(names, sorted, "services should be sorted alphabetically by name");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_services_output_basic() {
         let sample = "NetworkManager.service loaded active running Network Manager\n\
@@ -163,6 +400,7 @@ mod tests {
         assert!(!result[2].is_running, "inactive service should not be running");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_services_output_enabled_set() {
         let sample = "sshd.service loaded active running OpenSSH Daemon";
@@ -173,6 +411,7 @@ mod tests {
         assert!(result[0].is_enabled, "service in enabled set should be marked enabled");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_services_output_skips_headers() {
         let sample = "UNIT LOAD ACTIVE SUB DESCRIPTION\n\
@@ -185,6 +424,7 @@ mod tests {
         assert_eq!(result[0].name, "sshd");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_services_output_user_flag() {
         let sample = "myapp.service loaded active running My App";
@@ -193,83 +433,4 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(result[0].is_user_service, "should be marked as user service");
     }
-}
-
-#[tauri::command]
-pub fn list_services() -> Result<serde_json::Value, String> {
-    let mut all_services: Vec<ServiceInfo> = Vec::new();
-
-    let system_enabled = get_enabled_services(false);
-    let user_enabled = get_enabled_services(true);
-
-    if let Ok(output) = Command::new("systemctl")
-        .args(["list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend"])
-        .output()
-    {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            all_services.extend(parse_services_output(&stdout, false, &system_enabled));
-        }
-    }
-
-    if let Ok(output) = Command::new("systemctl")
-        .args(["--user", "list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend"])
-        .output()
-    {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            all_services.extend(parse_services_output(&stdout, true, &user_enabled));
-        }
-    }
-
-    all_services.sort_by(|a, b| a.name.cmp(&b.name));
-
-    Ok(json!(all_services))
-}
-
-fn run_systemctl(action: &str, name: &str, is_user: bool) -> Result<serde_json::Value, String> {
-    let service = format!("{}.service", name);
-    let output = if is_user {
-        Command::new("systemctl")
-            .args(["--user", action, &service])
-            .output()
-    } else {
-        Command::new("pkexec")
-            .args(["systemctl", action, &service])
-            .output()
-    };
-
-    let output = output.map_err(|e| e.to_string())?;
-    let success = output.status.success();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    Ok(json!({
-        "success": success,
-        "error": if success { "" } else { &stderr }
-    }))
-}
-
-#[tauri::command]
-pub fn start_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
-    run_systemctl("start", &name, is_user)
-}
-
-#[tauri::command]
-pub fn stop_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
-    run_systemctl("stop", &name, is_user)
-}
-
-#[tauri::command]
-pub fn restart_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
-    run_systemctl("restart", &name, is_user)
-}
-
-#[tauri::command]
-pub fn enable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
-    run_systemctl("enable", &name, is_user)
-}
-
-#[tauri::command]
-pub fn disable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
-    run_systemctl("disable", &name, is_user)
 }

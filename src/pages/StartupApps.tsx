@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { listStartupApps, addStartupApp, editStartupApp, deleteStartupApp, toggleStartupApp } from '../api/config'
 import { Plus, Pencil, Trash2, RotateCw } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { usePlatform } from '../hooks/usePlatform'
 
 interface StartupApp {
   name?: string
@@ -12,6 +13,9 @@ interface StartupApp {
 }
 
 export default function StartupApps() {
+  const platform = usePlatform()
+  const isMac = platform === 'macos'
+
   const [apps, setApps] = useState<StartupApp[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -105,7 +109,9 @@ export default function StartupApps() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Startup Applications</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+          {isMac ? 'Login Items' : 'Startup Applications'}
+        </h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setFormName(''); setFormExec(''); setShowAddModal(true) }}
@@ -132,7 +138,9 @@ export default function StartupApps() {
 
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
         {apps.length === 0 ? (
-          <div className="p-4 text-gray-600 dark:text-gray-400">No autostart entries found.</div>
+          <div className="p-4 text-gray-600 dark:text-gray-400">
+            {isMac ? 'No launch agents found in ~/Library/LaunchAgents.' : 'No autostart entries found.'}
+          </div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
             {apps.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map((app) => (
@@ -195,7 +203,9 @@ export default function StartupApps() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => { setShowAddModal(false); setEditingApp(null) }}>
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
             <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-              {editingApp ? 'Edit Startup Application' : 'Add Startup Application'}
+              {editingApp
+                ? (isMac ? 'Edit Login Item' : 'Edit Startup Application')
+                : (isMac ? 'Add Login Item' : 'Add Startup Application')}
             </h2>
             <div className="space-y-4">
               <div>
@@ -231,7 +241,7 @@ export default function StartupApps() {
                 disabled={!formName.trim() || !formExec.trim()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
-                {editingApp ? 'Save Changes' : 'Add Application'}
+                {editingApp ? 'Save Changes' : (isMac ? 'Add Login Item' : 'Add Application')}
               </button>
             </div>
           </div>
