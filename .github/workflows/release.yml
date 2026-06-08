@@ -24,9 +24,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 10
 
       - name: Install Node.js
         uses: actions/setup-node@v5
@@ -89,9 +89,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 10
 
       - name: Install Node.js
         uses: actions/setup-node@v5
