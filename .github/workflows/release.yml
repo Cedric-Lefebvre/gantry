@@ -71,15 +71,22 @@ jobs:
             -F "file=@$DEB"
 
   build-macos:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: aarch64
+          - os: macos-13
+            arch: x86_64
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -95,7 +102,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build Tauri app (universal binary)
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -104,4 +111,3 @@ jobs:
           releaseName: "Gantry ${{ github.event.inputs.tag || github.ref_name }}"
           releaseDraft: false
           prerelease: false
-          args: --target universal-apple-darwin

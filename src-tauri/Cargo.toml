@@ -1,6 +1,6 @@
 [package]
 name = "gantry"
-version = "0.1.15"
+version = "0.1.16"
 description = "A lightweight system management tool"
 authors = ["Cedric Lefebvre"]
 license = "MIT"

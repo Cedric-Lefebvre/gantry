@@ -24,6 +24,7 @@ pub struct CustomScript {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ScriptsConfig {
+    #[serde(default)]
     scripts: Vec<CustomScript>,
 }
 
@@ -77,9 +78,17 @@ fn save_config(config: &ScriptsConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_config() -> MutexGuard<'static, ()> {
+        CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_list_scripts_returns_array() {
+        let _guard = lock_config();
         let result = list_scripts();
         assert!(result.is_ok(), "list_scripts failed: {:?}", result.err());
         assert!(result.unwrap().is_array(), "scripts should be an array");
@@ -87,6 +96,7 @@ mod tests {
 
     #[test]
     fn test_add_and_remove_script() {
+        let _guard = lock_config();
         let result = add_script("Test Script".to_string(), "echo hello".to_string(), false, None);
         assert!(result.is_ok(), "add_script failed: {:?}", result.err());
         let script = result.unwrap();
@@ -102,6 +112,7 @@ mod tests {
 
     #[test]
     fn test_run_script_echo() {
+        let _guard = lock_config();
         let script = add_script("Run Test".to_string(), "echo gantry_test_output".to_string(), false, None).unwrap();
         let id = script["id"].as_str().unwrap().to_string();
 
@@ -120,6 +131,7 @@ mod tests {
 
     #[test]
     fn test_run_script_failure() {
+        let _guard = lock_config();
         let script = add_script("Failing Script".to_string(), "exit 1".to_string(), false, None).unwrap();
         let id = script["id"].as_str().unwrap().to_string();
 
@@ -134,6 +146,7 @@ mod tests {
 
     #[test]
     fn test_run_script_with_prompt_args() {
+        let _guard = lock_config();
         let script = add_script(
             "Args Test".to_string(),
             "echo {greeting} {name}".to_string(),
@@ -161,6 +174,7 @@ mod tests {
 
     #[test]
     fn test_update_script() {
+        let _guard = lock_config();
         let script = add_script("Original".to_string(), "echo original".to_string(), false, None).unwrap();
         let id = script["id"].as_str().unwrap().to_string();
 
@@ -179,12 +193,14 @@ mod tests {
 
     #[test]
     fn test_run_nonexistent_script() {
+        let _guard = lock_config();
         let result = run_script("nonexistent_id_xyz".to_string(), None);
         assert!(result.is_err(), "running nonexistent script should return error");
     }
 
     #[test]
     fn test_remove_nonexistent_script_is_ok() {
+        let _guard = lock_config();
         // retain() silently no-ops when the id isn't found
         let result = remove_script("nonexistent_id_xyz".to_string());
         assert!(result.is_ok(), "remove_script on nonexistent id should not error");
@@ -240,6 +256,30 @@ pub fn update_script(id: String, name: String, command: String, requires_sudo: b
     }
 }
 
+#[cfg(target_os = "linux")]
+fn run_privileged(command: &str) -> std::io::Result<std::process::Output> {
+    Command::new("pkexec")
+        .arg("sh")
+        .arg("-c")
+        .arg(command)
+        .output()
+}
+
+#[cfg(target_os = "macos")]
+fn run_privileged(command: &str) -> std::io::Result<std::process::Output> {
+    let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "do shell script \"{}\" with administrator privileges",
+        escaped
+    );
+    Command::new("osascript").arg("-e").arg(&script).output()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn run_privileged(command: &str) -> std::io::Result<std::process::Output> {
+    Command::new("sh").arg("-c").arg(command).output()
+}
+
 #[tauri::command]
 pub fn run_script(id: String, args: Option<HashMap<String, String>>) -> Result<serde_json::Value, String> {
     let config = load_config()?;
@@ -254,11 +294,7 @@ pub fn run_script(id: String, args: Option<HashMap<String, String>>) -> Result<s
     }
 
     let output = if script.requires_sudo {
-        Command::new("pkexec")
-            .arg("sh")
-            .arg("-c")
-            .arg(&command)
-            .output()
+        run_privileged(&command)
     } else {
         Command::new("sh")
             .arg("-c")

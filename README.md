@@ -1,6 +1,6 @@
 # Gantry
 
-A lightweight Linux system management desktop app built with Tauri and React. Monitor your machine, manage services, control packages, and run scripts — all from one clean interface.
+A lightweight system management desktop app built with Tauri and React. Monitor your machine, manage services, control packages, and run scripts — all from one clean interface. Runs on **Linux** and **macOS**: where Linux uses systemd and APT, macOS uses launchd and Homebrew, and the UI adapts automatically.
 
 ## Screenshots
 
@@ -46,6 +46,20 @@ Once set up, `sudo apt upgrade` will keep Gantry up to date automatically.
 
 Download the latest `.deb`, `.rpm`, or `.AppImage` from the [releases page](https://github.com/Cedric-Lefebvre/gantry/releases).
 
+### macOS
+
+Download the latest `.dmg` from the [releases page](https://github.com/Cedric-Lefebvre/gantry/releases) — pick `aarch64` for Apple Silicon or `x64` for Intel — open it, and drag **Gantry** into `Applications`.
+
+Because the app is not yet signed with an Apple Developer ID, Gatekeeper will block it on first launch ("Gantry can't be opened because Apple cannot check it for malicious software"). Clear the download quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Gantry.app
+```
+
+Alternatively, right-click the app in Finder and choose **Open**, then confirm in the dialog.
+
+> **Note:** On macOS, the package and service features map to the platform's native tooling — *Repositories* manages Homebrew taps (requires [Homebrew](https://brew.sh)) and *Services* / *Startup Apps* manage launchd agents and daemons. Privileged scripts and service actions prompt for credentials via the standard macOS admin dialog.
+
 ### CLI
 
 ```bash
@@ -58,7 +72,7 @@ gantry --help     # print help
 
 - Node.js 18+
 - Rust 1.77+
-- [Tauri system dependencies](https://tauri.app/start/prerequisites/)
+- [Tauri system dependencies](https://tauri.app/start/prerequisites/) (on macOS: Xcode Command Line Tools — `xcode-select --install`)
 
 ```bash
 git clone https://github.com/Cedric-Lefebvre/gantry.git
