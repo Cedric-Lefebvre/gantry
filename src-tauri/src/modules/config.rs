@@ -693,7 +693,7 @@ pub fn list_startup_apps() -> Result<serde_json::Value, String> {
                 continue;
             }
 
-            let Ok(val) = plist::from_file::<plist::Value, _>(&path) else {
+            let Ok(val) = plist::from_file::<_, plist::Value>(&path) else {
                 continue;
             };
             let Some(dict) = val.into_dictionary() else { continue };
@@ -779,7 +779,7 @@ pub fn edit_startup_app(file: String, name: String, exec: String) -> Result<serd
 
     let _ = Command::new("launchctl").args(["unload", &filepath.to_string_lossy()]).output();
 
-    let val = plist::from_file::<plist::Value, _>(&filepath)
+    let val = plist::from_file::<_, plist::Value>(&filepath)
         .map_err(|e| format!("Failed to read plist: {}", e))?;
     let mut dict = val
         .into_dictionary()

@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::process::Command;
 use sysinfo::{System, RefreshKind, ProcessRefreshKind};

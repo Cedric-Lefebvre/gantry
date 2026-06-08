@@ -1,5 +1,6 @@
 use serde_json::json;
 use std::process::Command;
+#[cfg(target_os = "linux")]
 use std::fs;
 
 #[cfg(target_os = "linux")]

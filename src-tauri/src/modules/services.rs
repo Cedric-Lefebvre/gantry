@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::process::Command;
+#[cfg(target_os = "linux")]
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,7 +183,7 @@ fn launchagent_dirs() -> Vec<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn plist_run_at_load(path: &std::path::Path) -> bool {
-    plist::from_file::<plist::Value, _>(path)
+    plist::from_file::<_, plist::Value>(path)
         .ok()
         .and_then(|v| v.into_dictionary())
         .and_then(|d| d.get("RunAtLoad").and_then(|v| v.as_boolean()))
@@ -191,7 +192,7 @@ fn plist_run_at_load(path: &std::path::Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn plist_is_disabled(path: &std::path::Path) -> bool {
-    plist::from_file::<plist::Value, _>(path)
+    plist::from_file::<_, plist::Value>(path)
         .ok()
         .and_then(|v| v.into_dictionary())
         .and_then(|d| d.get("Disabled").and_then(|v| v.as_boolean()))
@@ -214,7 +215,7 @@ pub fn list_services() -> Result<serde_json::Value, String> {
                 if path.extension().and_then(|e| e.to_str()) != Some("plist") {
                     continue;
                 }
-                if let Ok(val) = plist::from_file::<plist::Value, _>(&path) {
+                if let Ok(val) = plist::from_file::<_, plist::Value>(&path) {
                     if let Some(dict) = val.into_dictionary() {
                         if let Some(label) = dict.get("Label").and_then(|v| v.as_string()) {
                             label_to_path.insert(label.to_string(), (path, is_user));
