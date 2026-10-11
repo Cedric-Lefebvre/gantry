@@ -26,7 +26,7 @@ optdepends=(
   'nvidia-utils: NVIDIA GPU monitoring'
   'pacman-contrib: live update checks and package cache pruning'
 )
-options=('!lto')
+options=('!lto' '!debug')
 
 _repo="$(realpath "${startdir:-$PWD}/../..")"
 

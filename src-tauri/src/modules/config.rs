@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
@@ -7,6 +8,8 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use super::pacman;
 
+// macOS builds its tap list as JSON directly
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Repository {
     pub id: String,
