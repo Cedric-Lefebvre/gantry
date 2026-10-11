@@ -1,0 +1,48 @@
+# Maintainer: Cedric Lefebvre
+#
+# Builds Gantry from the checkout this PKGBUILD lives in:
+#   cd packaging/arch && makepkg -si
+
+pkgname=gantry
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="A lightweight system management tool"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Cedric-Lefebvre/gantry"
+license=('MIT')
+depends=(
+  'webkit2gtk-4.1'
+  'gtk3'
+  'polkit'
+  'systemd'
+  'util-linux'
+  'iproute2'
+  'pciutils'
+  'usbutils'
+)
+makedepends=('cargo' 'npm')
+optdepends=(
+  'lm_sensors: detect additional hardware sensors with sensors-detect'
+  'nvidia-utils: NVIDIA GPU monitoring'
+  'pacman-contrib: live update checks and package cache pruning'
+)
+options=('!lto')
+
+_repo="$(realpath "${startdir:-$PWD}/../..")"
+
+pkgver() {
+  sed -n 's/.*"version": "\(.*\)".*/\1/p' "$_repo/package.json" | head -1
+}
+
+build() {
+  cd "$_repo"
+  export CARGO_TARGET_DIR="$_repo/target"
+  npm ci
+  npx tauri build --bundles deb
+}
+
+package() {
+  cd "$_repo"
+  cp -a "target/release/bundle/deb/Gantry_${pkgver}_"*/data/usr "$pkgdir/"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

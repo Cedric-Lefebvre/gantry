@@ -4,12 +4,10 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn log_file_path() -> Result<PathBuf, String> {
-    dirs::home_dir()
-        .map(|h| h.join(".gantry").join("app.log"))
-        .ok_or_else(|| "Could not find home directory".to_string())
+    Ok(super::paths::app_dir().join("app.log"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_log(message: String) -> Result<String, String> {
     let log_file = log_file_path()?;
 
@@ -32,14 +30,14 @@ pub fn write_log(message: String) -> Result<String, String> {
     Ok(log_file.to_string_lossy().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_log_file() -> Result<String, String> {
     let log_file = log_file_path()?;
     fs::read_to_string(&log_file)
         .map_err(|e| format!("Failed to read log file: {}", e))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_log_file() -> Result<String, String> {
     let log_file = log_file_path()?;
     fs::write(&log_file, "")

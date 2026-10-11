@@ -20,7 +20,7 @@ echo "Output directory: $ICONS_DIR"
 
 # Check for ImageMagick
 if ! command -v convert &> /dev/null; then
-    echo "Error: ImageMagick is required. Install with: sudo apt install imagemagick"
+    echo "Error: ImageMagick is required. Install it with your package manager (apt install imagemagick / pacman -S imagemagick)"
     exit 1
 fi
 

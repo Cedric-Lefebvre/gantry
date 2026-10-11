@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Gantry",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.gantry.manager",
   "build": {
     "frontendDist": "../dist",
@@ -23,12 +23,13 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,6 +38,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": []
+    "externalBin": [],
+    "linux": {
+      "deb": {
+        "depends": ["pciutils", "usbutils", "iproute2", "pkexec | policykit-1"]
+      },
+      "rpm": {
+        "depends": ["pciutils", "usbutils", "iproute", "polkit"]
+      }
+    }
   }
 }

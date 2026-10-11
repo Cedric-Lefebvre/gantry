@@ -1,6 +1,5 @@
 # Frontend - Node.js
 node_modules/
-package-lock.json
 yarn.lock
 
 # Frontend - Build output
@@ -40,3 +39,8 @@ Thumbs.db
 
 # App-specific logs
 .gantry/
+
+# makepkg output
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.*

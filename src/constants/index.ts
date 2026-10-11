@@ -1,4 +1,4 @@
-import { Settings as SettingsIcon, Cpu, HardDrive, Server, Database, Terminal, FileText, ScrollText, Cog } from 'lucide-react'
+import { Settings as SettingsIcon, Cpu, HardDrive, Server, Database, Terminal, FileText, ScrollText, Cog, Package } from 'lucide-react'
 import { MenuItem, PageType } from '../types'
 
 export const NAVIGATION_ITEMS: MenuItem[] = [
@@ -7,6 +7,7 @@ export const NAVIGATION_ITEMS: MenuItem[] = [
   { id: 'processes', label: 'Processes', icon: Server },
   { id: 'services', label: 'Services', icon: Cog },
   { id: 'repositories', label: 'Repositories', icon: Database },
+  { id: 'packages', label: 'Packages', icon: Package, packageManagers: ['pacman'] },
   { id: 'startup', label: 'Startup Apps', icon: Terminal },
   { id: 'scripts', label: 'Scripts', icon: ScrollText },
   { id: 'logs', label: 'Logs', icon: FileText },

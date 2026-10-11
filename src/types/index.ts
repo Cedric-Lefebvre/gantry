@@ -1,6 +1,8 @@
-export type PageType = 'settings' | 'devices' | 'processes' | 'repositories' | 'startup' | 'resources' | 'logs' | 'scripts' | 'services'
+export type PageType = 'settings' | 'devices' | 'processes' | 'repositories' | 'packages' | 'startup' | 'resources' | 'logs' | 'scripts' | 'services'
 
 export type Platform = 'linux' | 'macos' | 'windows'
+
+export type PackageManager = 'apt' | 'pacman' | 'homebrew' | 'none'
 
 export interface AppSettings {
   theme: string
@@ -69,4 +71,6 @@ export interface MenuItem {
   id: PageType
   label: string
   icon: React.ComponentType<{ size: number }>
+  // Only shown when the system uses one of these package managers
+  packageManagers?: PackageManager[]
 }

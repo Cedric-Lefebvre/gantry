@@ -15,8 +15,7 @@ fn default_theme() -> String {
 }
 
 fn get_settings_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".gantry").join("settings.yaml")
+    super::paths::app_dir().join("settings.yaml")
 }
 
 fn ensure_config_dir() -> Result<(), String> {
@@ -45,13 +44,13 @@ fn save_settings(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let settings = load_settings()?;
     Ok(json!(settings))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_theme(theme: String) -> Result<serde_json::Value, String> {
     let mut settings = load_settings()?;
     settings.theme = theme;

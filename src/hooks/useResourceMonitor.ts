@@ -233,9 +233,17 @@ export function useResourceMonitorProvider(): ResourceMonitorData {
       }
     }
 
+    // Nothing is polled while the window is hidden or minimised
+    const tick = () => { if (!document.hidden) fetch() }
+    const onVisibilityChange = () => { if (!document.hidden) fetch() }
+
     fetch()
-    intervalRef.current = window.setInterval(fetch, 1000)
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+    intervalRef.current = window.setInterval(tick, 1000)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [])
 
   return {

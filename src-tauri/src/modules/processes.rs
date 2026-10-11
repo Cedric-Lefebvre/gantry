@@ -3,26 +3,44 @@ use serde_json::json;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::fs;
-use std::process::Command;
-use sysinfo::{System, RefreshKind, ProcessRefreshKind};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-#[cfg(target_os = "linux")]
-fn is_thread_group_leader(pid: u32) -> bool {
-    if let Ok(content) = fs::read_to_string(format!("/proc/{}/status", pid)) {
-        for line in content.lines() {
-            if line.starts_with("Tgid:") {
-                if let Some(tgid) = line.split_whitespace().nth(1).and_then(|s| s.parse::<u32>().ok()) {
-                    return tgid == pid;
-                }
-            }
-        }
-    }
-    true
+static PROCESS_SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
+
+const TERMINATE_GRACE: Duration = Duration::from_secs(2);
+const TERMINATE_POLL: Duration = Duration::from_millis(100);
+
+// Only what the process list shows is refreshed: no command lines, environment
+// or per-thread entries.
+fn refresh_processes(sys: &mut System) {
+    let kind = ProcessRefreshKind::nothing()
+        .with_cpu()
+        .with_memory()
+        .with_exe(UpdateKind::OnlyIfNotSet)
+        .without_tasks();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
 }
 
-#[cfg(target_os = "macos")]
-fn is_thread_group_leader(_pid: u32) -> bool {
-    true
+// CPU usage is the delta between two refreshes of the same System, so the
+// instance is kept around and primed with a first pair of refreshes.
+fn get_process_system() -> &'static Mutex<System> {
+    PROCESS_SYSTEM.get_or_init(|| {
+        let mut sys = System::new();
+        refresh_processes(&mut sys);
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        Mutex::new(sys)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn page_size() -> u64 {
+    static PAGE_SIZE: OnceLock<u64> = OnceLock::new();
+    *PAGE_SIZE.get_or_init(|| {
+        let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if size > 0 { size as u64 } else { 4096 }
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -33,7 +51,7 @@ fn get_process_private_mem(pid: u32) -> Option<u64> {
         let resident: u64 = parts[1].parse().ok()?;
         let shared: u64 = parts[2].parse().ok()?;
         let private_pages = resident.saturating_sub(shared);
-        return Some(private_pages * 4096);
+        return Some(private_pages * page_size());
     }
     None
 }
@@ -112,20 +130,15 @@ fn detect_app_name(name: &str, exe: &str) -> (String, String) {
     (name.to_string(), "default".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_processes() -> Result<serde_json::Value, String> {
-    let sys = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::everything())
-    );
+    let mut sys = get_process_system().lock().unwrap_or_else(|e| e.into_inner());
+    refresh_processes(&mut sys);
 
     let mut entries: Vec<ProcessEntry> = Vec::new();
 
     for (pid, process) in sys.processes() {
         let pid_u32 = pid.as_u32();
-
-        if !is_thread_group_leader(pid_u32) {
-            continue;
-        }
 
         let cpu_usage = process.cpu_usage() as f64;
         let cpu_value = if cpu_usage.is_finite() { cpu_usage } else { 0.0 };
@@ -155,7 +168,7 @@ pub fn list_processes() -> Result<serde_json::Value, String> {
     let mut result: Vec<ProcessGroup> = groups
         .into_iter()
         .map(|(name, (icon, mut procs))| {
-            procs.sort_by(|a, b| b.memory.cmp(&a.memory));
+            procs.sort_by_key(|p| std::cmp::Reverse(p.memory));
             let total_cpu: f64 = procs.iter().map(|p| p.cpu).sum();
             let total_memory: u64 = procs.iter().map(|p| p.memory).sum();
             let count = procs.len();
@@ -173,7 +186,7 @@ pub fn list_processes() -> Result<serde_json::Value, String> {
         })
         .collect();
 
-    result.sort_by(|a, b| b.total_memory.cmp(&a.total_memory));
+    result.sort_by_key(|g| std::cmp::Reverse(g.total_memory));
 
     Ok(serde_json::to_value(result).unwrap_or(json!([])))
 }
@@ -243,49 +256,162 @@ mod tests {
     }
 
     #[test]
-    fn test_is_thread_group_leader_self() {
-        let pid = std::process::id();
-        assert!(is_thread_group_leader(pid), "current process should be a thread group leader");
+    fn test_terminate_stops_a_child_process() {
+        let mut child = std::process::Command::new("sleep").arg("60").spawn().expect("spawn sleep");
+        let pid = child.id();
+        // reap in the background, a zombie would still count as alive
+        let reaper = std::thread::spawn(move || child.wait());
+
+        let started = std::time::Instant::now();
+        assert!(kill_process(pid).is_ok());
+        assert!(started.elapsed() < TERMINATE_GRACE, "SIGTERM should be enough for sleep");
+
+        let status = reaper.join().unwrap().unwrap();
+        assert!(!status.success(), "child should have been terminated by a signal");
+    }
+
+    #[test]
+    fn test_kill_rejects_group_pids() {
+        assert!(kill_process(0).is_err(), "PID 0 addresses the whole process group");
+        assert!(kill_process(u32::MAX).is_err(), "PID must fit a positive pid_t");
+    }
+
+    #[test]
+    fn test_kill_missing_process_is_ok() {
+        assert!(kill_process_group(vec![i32::MAX as u32 - 1]).is_ok(), "an already gone process is not an error");
+    }
+
+    #[test]
+    fn test_list_processes_reports_cpu_usage() {
+        let mut burner = std::process::Command::new("sh")
+            .args(["-c", "while :; do :; done"])
+            .spawn()
+            .expect("spawn busy loop");
+        let pid = burner.id() as u64;
+
+        let _ = list_processes();
+        std::thread::sleep(Duration::from_millis(600));
+        let groups = list_processes().unwrap();
+        let _ = burner.kill();
+        let _ = burner.wait();
+
+        let cpu = groups
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["processes"].as_array().unwrap().iter())
+            .find(|p| p["pid"].as_u64() == Some(pid))
+            .and_then(|p| p["cpu"].as_f64())
+            .expect("busy loop should be listed");
+        assert!(cpu > 10.0, "a busy loop should show CPU usage, got {}", cpu);
+    }
+
+    #[test]
+    fn test_list_processes_has_no_thread_entries() {
+        let groups = list_processes().unwrap();
+        let pids: Vec<u64> = groups
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["processes"].as_array().unwrap().iter())
+            .filter_map(|p| p["pid"].as_u64())
+            .collect();
+        let unique: std::collections::HashSet<&u64> = pids.iter().collect();
+        assert_eq!(unique.len(), pids.len(), "each process should be listed once");
+
+        #[cfg(target_os = "linux")]
+        for pid in &pids {
+            // threads have no directory of their own at the top of /proc
+            let listed = std::fs::read_dir("/proc").unwrap().flatten().any(|e| e.file_name().to_string_lossy() == pid.to_string());
+            let gone = !std::path::Path::new(&format!("/proc/{}", pid)).exists();
+            assert!(listed || gone, "PID {} is a thread, not a process", pid);
+        }
     }
 }
 
-#[tauri::command]
-pub fn kill_process(pid: u32) -> Result<String, String> {
-    let output = Command::new("kill")
-        .arg("-9")
-        .arg(pid.to_string())
-        .output()
-        .map_err(|e| format!("Failed to kill process: {}", e))?;
+fn signal_target(pid: u32) -> Result<libc::pid_t, String> {
+    // 0 and negative values address whole process groups, never pass them on
+    libc::pid_t::try_from(pid)
+        .ok()
+        .filter(|target| *target > 0)
+        .ok_or_else(|| format!("Invalid PID {}", pid))
+}
 
-    if output.status.success() {
-        Ok(format!("Process {} terminated", pid))
+fn send_signal(target: libc::pid_t, signal: libc::c_int) -> std::io::Result<()> {
+    if unsafe { libc::kill(target, signal) } == 0 {
+        Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Failed to kill process {}: {}", pid, stderr))
+        Err(std::io::Error::last_os_error())
     }
 }
 
-#[tauri::command]
-pub fn kill_process_group(pids: Vec<u32>) -> Result<String, String> {
-    let mut killed = 0;
+fn is_gone(target: libc::pid_t) -> bool {
+    matches!(send_signal(target, 0), Err(e) if e.raw_os_error() == Some(libc::ESRCH))
+}
+
+fn wait_until_gone(targets: &[libc::pid_t]) -> Vec<libc::pid_t> {
+    let mut remaining: Vec<libc::pid_t> = targets.to_vec();
+    let mut waited = Duration::ZERO;
+    loop {
+        remaining.retain(|target| !is_gone(*target));
+        if remaining.is_empty() || waited >= TERMINATE_GRACE {
+            return remaining;
+        }
+        std::thread::sleep(TERMINATE_POLL);
+        waited += TERMINATE_POLL;
+    }
+}
+
+/// Asks the processes to exit with SIGTERM and only falls back to SIGKILL for
+/// the ones still around after the grace period. Returns one error per PID
+/// that could not be signalled.
+fn terminate(pids: &[u32]) -> Vec<String> {
     let mut errors = Vec::new();
+    let mut signalled = Vec::new();
 
-    for pid in &pids {
-        let output = Command::new("kill")
-            .arg("-9")
-            .arg(pid.to_string())
-            .output();
-
-        match output {
-            Ok(o) if o.status.success() => killed += 1,
-            Ok(o) => errors.push(format!("PID {}: {}", pid, String::from_utf8_lossy(&o.stderr))),
+    for pid in pids {
+        let outcome = signal_target(*pid).and_then(|target| match send_signal(target, libc::SIGTERM) {
+            Ok(()) => Ok(Some(target)),
+            Err(e) if e.raw_os_error() == Some(libc::ESRCH) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        });
+        match outcome {
+            Ok(Some(target)) => signalled.push(target),
+            Ok(None) => {}
             Err(e) => errors.push(format!("PID {}: {}", pid, e)),
         }
     }
 
+    for target in wait_until_gone(&signalled) {
+        if let Err(e) = send_signal(target, libc::SIGKILL) {
+            if e.raw_os_error() != Some(libc::ESRCH) {
+                errors.push(format!("PID {}: {}", target, e));
+            }
+        }
+    }
+
+    errors
+}
+
+#[tauri::command(async)]
+pub fn kill_process(pid: u32) -> Result<String, String> {
+    match terminate(&[pid]).pop() {
+        None => Ok(format!("Process {} terminated", pid)),
+        Some(error) => Err(format!("Failed to terminate process: {}", error)),
+    }
+}
+
+#[tauri::command(async)]
+pub fn kill_process_group(pids: Vec<u32>) -> Result<String, String> {
+    let errors = terminate(&pids);
     if errors.is_empty() {
-        Ok(format!("Terminated {} processes", killed))
+        Ok(format!("Terminated {} processes", pids.len()))
     } else {
-        Ok(format!("Terminated {} processes, {} failed", killed, errors.len()))
+        Err(format!(
+            "Terminated {} of {} processes. {}",
+            pids.len() - errors.len(),
+            pids.len(),
+            errors.join("; ")
+        ))
     }
 }

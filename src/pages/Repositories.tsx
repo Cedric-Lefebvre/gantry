@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { RotateCw, Plus, Trash2, Search } from 'lucide-react'
 import { addAptRepo, deleteAptRepo } from '../api/config'
-import { usePlatform } from '../hooks/usePlatform'
+import { usePackageManager } from '../hooks/usePlatform'
 
 interface Repository {
   id: string
@@ -16,9 +16,14 @@ interface Repository {
   original_line: string
 }
 
+const PACMAN_PLACEHOLDER = '[myrepo]\nServer = https://example.com/$repo/os/$arch'
+
 export default function Repositories() {
-  const platform = usePlatform()
-  const isMac = platform === 'macos'
+  const packageManager = usePackageManager()
+  const isMac = packageManager === 'homebrew'
+  const isPacman = packageManager === 'pacman'
+  const isSupported = packageManager !== 'none'
+  const title = isMac ? 'Homebrew Taps' : isPacman ? 'Pacman Repositories' : isSupported ? 'APT Repositories' : 'Repositories'
 
   const [repositories, setRepositories] = useState<Repository[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -105,16 +110,18 @@ export default function Repositories() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-          {isMac ? 'Homebrew Taps' : 'APT Repositories'}
+          {title}
         </h1>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setNewRepoLine(''); setShowAddModal(true) }}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-          >
-            <Plus size={16} />
-            Add
-          </button>
+          {isSupported && (
+            <button
+              onClick={() => { setNewRepoLine(''); setShowAddModal(true) }}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            >
+              <Plus size={16} />
+              Add
+            </button>
+          )}
           <button
             onClick={() => fetchAptRepositories()}
             className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 rounded-lg transition-colors"
@@ -145,7 +152,11 @@ export default function Repositories() {
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
         {filteredRepositories.length === 0 ? (
           <div className="p-4 text-gray-600 dark:text-gray-400">
-            {search ? 'No repositories match your search' : 'No repositories configured'}
+            {search
+              ? 'No repositories match your search'
+              : isSupported
+                ? 'No repositories configured'
+                : 'No supported package manager found. Gantry manages APT, pacman and Homebrew repositories.'}
           </div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -181,6 +192,17 @@ export default function Repositories() {
                         {repo.uris}
                         {repo.suites && <span className="ml-2 text-gray-400">· {repo.suites} formulae</span>}
                         {repo.components && <span className="ml-2 text-gray-400">· {repo.components} casks</span>}
+                      </div>
+                    </>
+                  ) : isPacman ? (
+                    <>
+                      <div className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 truncate">
+                        {repo.suites}
+                      </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 truncate">
+                        {repo.uris}
+                        {repo.components && <span className="ml-2 text-gray-400">· SigLevel {repo.components}</span>}
+                        <span className="ml-2 text-gray-400 dark:text-gray-500">({repo.file_path})</span>
                       </div>
                     </>
                   ) : (
@@ -232,22 +254,34 @@ export default function Repositories() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-lg mx-4 border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
             <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-              {isMac ? 'Add Homebrew Tap' : 'Add APT Repository'}
+              {isMac ? 'Add Homebrew Tap' : isPacman ? 'Add Pacman Repository' : 'Add APT Repository'}
             </h2>
             <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                {isMac ? 'Tap Name' : 'Repository Line'}
+                {isMac ? 'Tap Name' : isPacman ? 'Repository Section' : 'Repository Line'}
               </label>
-              <input
-                type="text"
-                value={newRepoLine}
-                onChange={e => setNewRepoLine(e.target.value)}
-                placeholder={isMac ? 'homebrew/cask-fonts' : 'deb http://example.com/repo focal main'}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              {isPacman ? (
+                <textarea
+                  value={newRepoLine}
+                  onChange={e => setNewRepoLine(e.target.value)}
+                  placeholder={PACMAN_PLACEHOLDER}
+                  rows={4}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={newRepoLine}
+                  onChange={e => setNewRepoLine(e.target.value)}
+                  placeholder={isMac ? 'homebrew/cask-fonts' : 'deb http://example.com/repo focal main'}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 {isMac
                   ? 'Enter a Homebrew tap name, e.g. homebrew/cask-fonts or a GitHub repo owner/repo'
+                  : isPacman
+                  ? <>Enter the section as it should appear in <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">/etc/pacman.conf</code>: the name in brackets, then <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">Server</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">Include</code> lines and an optional <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">SigLevel</code></>
                   : <>Enter a complete APT repository line starting with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">deb-src</code></>}
               </p>
             </div>
@@ -282,7 +316,7 @@ export default function Repositories() {
               </p>
               {repo && (
                 <p className="text-xs font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded p-2 mb-6 truncate">
-                  {repo.types} {repo.uris} {repo.suites}
+                  {isPacman ? `[${repo.suites}] ${repo.uris}` : `${repo.types} ${repo.uris} ${repo.suites}`}
                 </p>
               )}
               <div className="flex justify-end gap-3">

@@ -2,9 +2,17 @@
  * Shared helpers for Gantry E2E tests.
  */
 
+import { existsSync } from 'node:fs'
+
+// The Repositories heading follows the package manager of the machine under test
+const REPOSITORIES_HEADING =
+  process.platform === 'darwin' ? 'Homebrew Taps'
+  : existsSync('/etc/pacman.conf') && !existsSync('/etc/apt') ? 'Pacman Repositories'
+  : 'APT Repositories'
+
 // Map nav button labels → actual h1 heading on that page
 const PAGE_HEADINGS = {
-  Repositories: 'APT Repositories',
+  Repositories: REPOSITORIES_HEADING,
   Scripts: 'Custom Scripts',
 }
 

@@ -115,7 +115,7 @@ fn parse_services_output(stdout: &str, is_user: bool, enabled_services: &HashSet
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_services() -> Result<serde_json::Value, String> {
     let mut all_services: Vec<ServiceInfo> = Vec::new();
 
@@ -200,7 +200,7 @@ fn plist_is_disabled(path: &std::path::Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_services() -> Result<serde_json::Value, String> {
     let mut label_to_path: std::collections::HashMap<String, (std::path::PathBuf, bool)> =
         std::collections::HashMap::new();
@@ -307,7 +307,7 @@ fn run_launchctl(action: &str, name: &str, is_user: bool) -> Result<serde_json::
     }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
     { run_systemctl("start", &name, is_user) }
@@ -315,7 +315,7 @@ pub fn start_service(name: String, is_user: bool) -> Result<serde_json::Value, S
     { run_launchctl("start", &name, is_user) }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
     { run_systemctl("stop", &name, is_user) }
@@ -323,7 +323,7 @@ pub fn stop_service(name: String, is_user: bool) -> Result<serde_json::Value, St
     { run_launchctl("stop", &name, is_user) }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restart_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
     { run_systemctl("restart", &name, is_user) }
@@ -331,7 +331,7 @@ pub fn restart_service(name: String, is_user: bool) -> Result<serde_json::Value,
     { run_launchctl("restart", &name, is_user) }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn enable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
     { run_systemctl("enable", &name, is_user) }
@@ -339,7 +339,7 @@ pub fn enable_service(name: String, is_user: bool) -> Result<serde_json::Value, 
     { run_launchctl("enable", &name, is_user) }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn disable_service(name: String, is_user: bool) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "linux")]
     { run_systemctl("disable", &name, is_user) }

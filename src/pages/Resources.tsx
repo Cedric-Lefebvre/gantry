@@ -3,6 +3,7 @@ import SpeedometerGauge from '../components/SpeedometerGauge'
 import { Thermometer, Fan, ArrowDown, ArrowUp, HardDrive, ChevronDown, ChevronRight, Network, Clock, Activity, X, Cpu, Monitor, MemoryStick, Wifi, Info } from 'lucide-react'
 import CopyableText from '../components/CopyableText'
 import { useResourceMonitor } from '../hooks/useResourceMonitor'
+import { usePackageManager } from '../hooks/usePlatform'
 import type { SystemResources } from '../hooks/useResourceMonitor'
 
 const formatBytes = (bytes: number): string => {
@@ -497,6 +498,9 @@ function ThermalSection({ resources }: { resources: SystemResources | null }) {
   }, [resources?.temperatures, resources?.fans, resources?.gpu])
 
   const hasSensors = (resources?.temperatures?.length ?? 0) > 0 || (resources?.fans?.length ?? 0) > 0
+  const isPacman = usePackageManager() === 'pacman'
+  const sensorsPackage = isPacman ? 'lm_sensors' : 'lm-sensors'
+  const sensorsInstallCommand = isPacman ? 'sudo pacman -S lm_sensors' : 'sudo apt install lm-sensors'
 
   const getDeviceLabel = (cat: SensorCategory, devices: DeviceSensors[], idx: number): string => {
     const device = devices[idx]
@@ -551,8 +555,8 @@ function ThermalSection({ resources }: { resources: SystemResources | null }) {
             <div className="relative group">
               <Info size={14} className="text-gray-400 hover:text-blue-500 cursor-help" />
               <div className="absolute right-0 bottom-full mb-2 w-64 p-3 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                Install <span className="font-mono bg-gray-700 dark:bg-gray-600 px-1 rounded">lm-sensors</span> to enable hardware monitoring:
-                <div className="font-mono mt-1.5 bg-gray-800 dark:bg-gray-600 p-1.5 rounded">sudo apt install lm-sensors<br/>sudo sensors-detect</div>
+                Install <span className="font-mono bg-gray-700 dark:bg-gray-600 px-1 rounded">{sensorsPackage}</span> to enable hardware monitoring:
+                <div className="font-mono mt-1.5 bg-gray-800 dark:bg-gray-600 p-1.5 rounded">{sensorsInstallCommand}<br/>sudo sensors-detect</div>
               </div>
             </div>
           </div>
@@ -676,7 +680,7 @@ function ThermalSection({ resources }: { resources: SystemResources | null }) {
           <Info size={24} className="text-gray-300 dark:text-gray-600 mx-auto mb-2" />
           <p className="text-sm text-gray-500 dark:text-gray-400">No temperature sensors detected.</p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            Install <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">lm-sensors</span> and run <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo sensors-detect</span> to enable hardware monitoring.
+            Install <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">{sensorsPackage}</span> and run <span className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo sensors-detect</span> to enable hardware monitoring.
           </p>
         </div>
       )}

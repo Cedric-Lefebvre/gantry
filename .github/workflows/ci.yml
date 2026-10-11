@@ -6,11 +6,28 @@ on:
   pull_request:
 
 jobs:
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm run typecheck
+      - run: pnpm run build
+
   test-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -19,6 +36,18 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+
+  test-arch:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed git rust webkit2gtk-4.1 gtk3 librsvg pciutils usbutils iproute2
+      - uses: actions/checkout@v5
       - run: cargo test
         working-directory: src-tauri
 

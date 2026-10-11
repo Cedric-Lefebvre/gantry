@@ -1,6 +1,6 @@
 # Gantry
 
-A lightweight system management desktop app built with Tauri and React. Monitor your machine, manage services, control packages, and run scripts — all from one clean interface. Runs on **Linux** and **macOS**: where Linux uses systemd and APT, macOS uses launchd and Homebrew, and the UI adapts automatically.
+A lightweight system management desktop app built with Tauri and React. Monitor your machine, manage services, control packages, and run scripts — all from one clean interface. Runs on **Linux** and **macOS**: where Linux uses systemd and APT or pacman, macOS uses launchd and Homebrew, and the UI adapts automatically.
 
 ## Screenshots
 
@@ -12,17 +12,19 @@ A lightweight system management desktop app built with Tauri and React. Monitor 
 
 **Resources** — Live CPU, memory, GPU, disk, and network monitoring with historical sparkline graphs. Per-core breakdown, thermal sensors grouped by device (CPU, GPU, NVMe, DIMM, network adapter), fan speeds, load average, and uptime.
 
-**Processes** — Grouped process list with CPU/memory usage. Kill individual processes or entire groups. Live auto-refresh mode, sortable columns, and search by name or PID.
+**Processes** — Grouped process list with CPU/memory usage. End individual processes or entire groups (SIGTERM first, SIGKILL only if they do not exit). Live auto-refresh mode, sortable columns, and search by name or PID.
 
 **Services** — Browse and manage systemd services (user + system). Start, stop, restart, enable, and disable with live status indicators.
 
 **Devices** — Hardware overview: block devices, PCI, USB, network interfaces, input devices, and processor info. OS/kernel info card at the top. Click any value to copy it.
 
-**APT Repositories** — View, add, enable/disable, and delete APT sources. Supports both `.list` and DEB822 `.sources` formats.
+**Repositories** — View, add, enable/disable, and delete package sources. On Debian/Ubuntu this manages APT sources (both `.list` and DEB822 `.sources` formats), on Arch-based distributions the repository sections of `/etc/pacman.conf`.
 
-**Startup Apps** — Full CRUD for XDG autostart entries. Add, edit, toggle, and delete `~/.config/autostart` desktop files.
+**Packages** (pacman) — Pending updates, orphaned packages, package cache size with one-click cleanup, and `.pacnew`/`.pacsave` files waiting to be merged. Live update checks and cache pruning use `pacman-contrib` when it is installed.
 
-**Scripts** — Create and run custom shell scripts with optional sudo. Output displayed inline.
+**Startup Apps** — Full CRUD for XDG autostart entries. Add, edit, toggle, and delete `~/.config/autostart` desktop files; system-wide entries from `/etc/xdg/autostart` are listed too and can be switched off.
+
+**Scripts** — Create and run custom shell scripts with optional sudo and prompts. Group them into collapsible categories with an icon of your choice, and drag scripts and categories to reorder them or move a script to another category; the order and the collapsed state are saved in `scripts.yaml`. Output is displayed inline, and long-running scripts show as running without blocking the app.
 
 **System Report** — One-click hardware summary (OS, CPU, RAM, GPU, storage) formatted for pasting into support tickets or GitHub issues.
 
@@ -41,6 +43,18 @@ sudo apt update && sudo apt install gantry
 ```
 
 Once set up, `sudo apt upgrade` will keep Gantry up to date automatically.
+
+### Arch Linux (and derivatives)
+
+Download the `.pkg.tar.zst` from the [releases page](https://github.com/Cedric-Lefebvre/gantry/releases) and install it with `sudo pacman -U gantry-*.pkg.tar.zst`, or build the package from a checkout of this repository:
+
+```bash
+git clone https://github.com/Cedric-Lefebvre/gantry.git
+cd gantry/packaging/arch
+makepkg -si
+```
+
+`makepkg` installs the build and runtime dependencies for you. To update, pull the repository and run `makepkg -si` again.
 
 ### Manual Download
 
@@ -71,7 +85,7 @@ gantry --help     # print help
 ### Build from Source
 
 - Node.js 18+
-- Rust 1.77+
+- Rust 1.95+
 - [Tauri system dependencies](https://tauri.app/start/prerequisites/) (on macOS: Xcode Command Line Tools — `xcode-select --install`)
 
 ```bash
@@ -80,6 +94,7 @@ cd gantry
 npm install
 npm run tauri dev     # development
 npm run tauri build   # production
+npm run typecheck     # TypeScript check
 ```
 
 ## Testing
@@ -96,6 +111,8 @@ cargo install tauri-driver
 sudo apt install webkit2gtk-driver   # Ubuntu 22.04
 # or
 sudo apt install webkitgtk-6.0-injected-bundle  # Ubuntu 24.04+
+# Arch: the webkit2gtk-4.1 package does not ship WebKitWebDriver,
+# so the suite cannot run against the stock package there
 
 # Build the release binary first (tests run against the real binary)
 npm run tauri:build
@@ -123,16 +140,19 @@ npm run test:e2e
 ## Configuration
 
 ```
-~/.gantry/
-├── scripts.yaml    # custom scripts
-└── settings.yaml   # theme and preferences
+~/.config/gantry/        # ~/Library/Application Support/gantry on macOS
+├── scripts.yaml         # custom scripts and their categories
+├── settings.yaml        # theme and preferences
+└── app.log              # warnings and errors
 ```
+
+Versions before 0.3.0 used `~/.gantry`; it is moved to the new location on first launch.
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Tailwind CSS
+- **Frontend**: React 19, TypeScript, Tailwind CSS
 - **Backend**: Rust, Tauri 2.0
 
 ## License
 
-MIT
+[MIT](LICENSE)

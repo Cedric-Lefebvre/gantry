@@ -10,6 +10,8 @@ interface StartupApp {
   exec?: string
   enabled?: boolean
   file_path?: string
+  // Installed system-wide: can be switched off but not edited or removed
+  system?: boolean
 }
 
 export default function StartupApps() {
@@ -162,11 +164,14 @@ export default function StartupApps() {
                 <div className="flex-1 min-w-0">
                   <div className={`font-semibold truncate ${app.enabled ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>
                     {app.name || app.file}
+                    {app.system && (
+                      <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">System</span>
+                    )}
                   </div>
                   <div className="text-sm text-gray-600 dark:text-gray-400 truncate">{app.exec}</div>
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className={`flex items-center gap-1 ${app.system ? 'invisible' : ''}`}>
                   <button
                     onClick={() => openEditModal(app)}
                     className="p-2 text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-600 rounded transition-colors"

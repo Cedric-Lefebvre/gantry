@@ -60,7 +60,7 @@ fn get_cpu_model() -> &'static str {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_system_overview() -> Result<serde_json::Value, String> {
     let mut sys = get_system().lock().unwrap();
     sys.refresh_all();
@@ -81,12 +81,23 @@ pub fn get_system_overview() -> Result<serde_json::Value, String> {
     Ok(json!({"cpus": cpus, "memory": mem}))
 }
 
+// Resources are polled every second: the GPU model never changes, so lspci
+// only runs once per card.
 #[cfg(target_os = "linux")]
 fn get_gpu_name_from_pci(device_path: &std::path::Path) -> String {
+    static NAMES: OnceLock<Mutex<std::collections::HashMap<std::path::PathBuf, String>>> = OnceLock::new();
+    let mut names = NAMES.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    names
+        .entry(device_path.to_path_buf())
+        .or_insert_with(|| lookup_gpu_name(device_path))
+        .clone()
+}
+
+#[cfg(target_os = "linux")]
+fn lookup_gpu_name(device_path: &std::path::Path) -> String {
     if let Ok(uevent) = fs::read_to_string(device_path.join("uevent")) {
         for line in uevent.lines() {
-            if line.starts_with("PCI_SLOT_NAME=") {
-                let slot = &line["PCI_SLOT_NAME=".len()..];
+            if let Some(slot) = line.strip_prefix("PCI_SLOT_NAME=") {
                 if let Ok(output) = Command::new("lspci").arg("-s").arg(slot).output() {
                     let lspci_line = String::from_utf8_lossy(&output.stdout);
                     if let Some(pos) = lspci_line.find(": ") {
@@ -101,12 +112,26 @@ fn get_gpu_name_from_pci(device_path: &std::path::Path) -> String {
 
 #[cfg(target_os = "linux")]
 fn get_gpu_info() -> serde_json::Value {
+    static NVIDIA_SMI_MISSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    use std::sync::atomic::Ordering;
+
     let mut gpus = Vec::new();
 
-    if let Ok(output) = Command::new("nvidia-smi")
-        .args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed", "--format=csv,noheader,nounits"])
-        .output()
-    {
+    let nvidia_smi = if NVIDIA_SMI_MISSING.load(Ordering::Relaxed) {
+        None
+    } else {
+        Command::new("nvidia-smi")
+            .args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed", "--format=csv,noheader,nounits"])
+            .output()
+            .inspect_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    NVIDIA_SMI_MISSING.store(true, Ordering::Relaxed);
+                }
+            })
+            .ok()
+    };
+
+    if let Some(output) = nvidia_smi {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
@@ -270,56 +295,120 @@ fn resolve_hwmon_device_name(hwmon_path: &std::path::Path, driver_name: &str) ->
 }
 
 #[cfg(target_os = "linux")]
+struct SensorInput {
+    input: std::path::PathBuf,
+    label: String,
+}
+
+#[cfg(target_os = "linux")]
+struct HwmonDevice {
+    name: String,
+    id: String,
+    device_name: String,
+    temps: Vec<SensorInput>,
+    fans: Vec<SensorInput>,
+}
+
+#[cfg(target_os = "linux")]
+const HWMON_RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[cfg(target_os = "linux")]
+fn hwmon_inputs(dir: &std::path::Path, device: &str, kind: &str, title: &str, count: usize) -> Vec<SensorInput> {
+    (1..=count)
+        .filter_map(|i| {
+            let input = dir.join(format!("{}{}_input", kind, i));
+            if !input.exists() {
+                return None;
+            }
+            let label = fs::read_to_string(dir.join(format!("{}{}_label", kind, i)))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| format!("{} {} {}", device, title, i));
+            Some(SensorInput { input, label })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn discover_hwmon() -> Vec<HwmonDevice> {
+    let Ok(entries) = fs::read_dir("/sys/class/hwmon") else { return Vec::new() };
+
+    entries
+        .flatten()
+        .map(|entry| {
+            let path = entry.path();
+            let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
+            HwmonDevice {
+                id: entry.file_name().to_string_lossy().to_string(),
+                device_name: resolve_hwmon_device_name(&path, &name),
+                temps: hwmon_inputs(&path, &name, "temp", "Sensor", 32),
+                fans: hwmon_inputs(&path, &name, "fan", "Fan", 8),
+                name,
+            }
+        })
+        .collect()
+}
+
+// Reading a sensor makes its driver query the hardware (SMBus for DIMMs, the
+// controller for NVMe...), which is by far the most expensive part of a poll.
+// Temperatures move slowly, so readings are reused for a few seconds.
+#[cfg(target_os = "linux")]
+const THERMAL_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[cfg(target_os = "linux")]
 fn get_thermal_info() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    type Readings = (Vec<serde_json::Value>, Vec<serde_json::Value>);
+    static READINGS: OnceLock<Mutex<Option<(std::time::Instant, Readings)>>> = OnceLock::new();
+
+    let mut cached = READINGS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    match cached.as_ref() {
+        Some((read_at, readings)) if read_at.elapsed() < THERMAL_REFRESH_INTERVAL => readings.clone(),
+        _ => {
+            let readings = read_thermal_sensors();
+            *cached = Some((std::time::Instant::now(), readings.clone()));
+            readings
+        }
+    }
+}
+
+// Which sensors exist only changes when hardware or drivers do, so the layout
+// is rediscovered occasionally and a read only opens the value files.
+#[cfg(target_os = "linux")]
+fn read_thermal_sensors() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    static HWMON: OnceLock<Mutex<(std::time::Instant, Vec<HwmonDevice>)>> = OnceLock::new();
+    let mut cache = HWMON
+        .get_or_init(|| Mutex::new((std::time::Instant::now(), discover_hwmon())))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if cache.0.elapsed() >= HWMON_RESCAN_INTERVAL {
+        *cache = (std::time::Instant::now(), discover_hwmon());
+    }
+
     let mut temps = Vec::new();
     let mut fans = Vec::new();
 
-    if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = fs::read_to_string(path.join("name")).unwrap_or_default().trim().to_string();
-            let hwmon_id = path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let device_name = resolve_hwmon_device_name(&path, &name);
-
-            for i in 1..=32 {
-                let input_path = path.join(format!("temp{}_input", i));
-                if let Ok(raw_temp) = fs::read_to_string(&input_path) {
-                    let temp_mc: f64 = raw_temp.trim().parse().unwrap_or(0.0);
-                    let temp_c = temp_mc / 1000.0;
-                    if temp_c > 0.0 && temp_c < 150.0 {
-                        let label_path = path.join(format!("temp{}_label", i));
-                        let label = fs::read_to_string(&label_path)
-                            .map(|s| s.trim().to_string())
-                            .unwrap_or_else(|_| format!("{} Sensor {}", name, i));
-                        temps.push(json!({
-                            "label": label,
-                            "sensor": name,
-                            "device_id": hwmon_id,
-                            "device_name": device_name,
-                            "celsius": (temp_c * 10.0).round() / 10.0,
-                        }));
-                    }
-                }
+    for device in &cache.1 {
+        for sensor in &device.temps {
+            let Ok(raw_temp) = fs::read_to_string(&sensor.input) else { continue };
+            let temp_c = raw_temp.trim().parse::<f64>().unwrap_or(0.0) / 1000.0;
+            if temp_c > 0.0 && temp_c < 150.0 {
+                temps.push(json!({
+                    "label": sensor.label,
+                    "sensor": device.name,
+                    "device_id": device.id,
+                    "device_name": device.device_name,
+                    "celsius": (temp_c * 10.0).round() / 10.0,
+                }));
             }
+        }
 
-            for i in 1..=8 {
-                let input_path = path.join(format!("fan{}_input", i));
-                if let Ok(raw_rpm) = fs::read_to_string(&input_path) {
-                    let rpm: u32 = raw_rpm.trim().parse().unwrap_or(0);
-                    let label_path = path.join(format!("fan{}_label", i));
-                    let label = fs::read_to_string(&label_path)
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_else(|_| format!("{} Fan {}", name, i));
-                    fans.push(json!({
-                        "label": label,
-                        "sensor": name,
-                        "device_id": hwmon_id,
-                        "rpm": rpm,
-                    }));
-                }
-            }
+        for sensor in &device.fans {
+            let Ok(raw_rpm) = fs::read_to_string(&sensor.input) else { continue };
+            fans.push(json!({
+                "label": sensor.label,
+                "sensor": device.name,
+                "device_id": device.id,
+                "rpm": raw_rpm.trim().parse::<u32>().unwrap_or(0),
+            }));
         }
     }
 
@@ -333,7 +422,7 @@ fn get_thermal_info() -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
 
 fn get_network_stats() -> serde_json::Value {
     let mut nets = get_networks().lock().unwrap();
-    nets.refresh();
+    nets.refresh(true);
 
     let stats: Vec<_> = nets.iter().map(|(name, data)| {
         json!({
@@ -456,32 +545,36 @@ fn get_uptime_seconds() -> u64 {
     0
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_report_file(content: String, filename: String) -> Result<String, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Could not determine home directory".to_string())?;
-    let dir = home.join("Downloads");
+    let dir = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
+        .ok_or_else(|| "Could not determine the downloads directory".to_string())?;
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
-    let path = dir.join(&filename);
+    let name = std::path::Path::new(&filename)
+        .file_name()
+        .ok_or_else(|| "Invalid file name".to_string())?;
+    let path = dir.join(name);
     fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_os_info() -> Result<serde_json::Value, String> {
     let mut os_name = String::from("Linux");
     let mut os_version = String::new();
     let mut os_pretty = String::new();
     if let Ok(content) = fs::read_to_string("/etc/os-release") {
         for line in content.lines() {
-            if line.starts_with("NAME=") {
-                os_name = line["NAME=".len()..].trim_matches('"').to_string();
-            } else if line.starts_with("VERSION=") {
-                os_version = line["VERSION=".len()..].trim_matches('"').to_string();
-            } else if line.starts_with("PRETTY_NAME=") {
-                os_pretty = line["PRETTY_NAME=".len()..].trim_matches('"').to_string();
+            if let Some(value) = line.strip_prefix("NAME=") {
+                os_name = value.trim_matches('"').to_string();
+            } else if let Some(value) = line.strip_prefix("VERSION=") {
+                os_version = value.trim_matches('"').to_string();
+            } else if let Some(value) = line.strip_prefix("PRETTY_NAME=") {
+                os_pretty = value.trim_matches('"').to_string();
             }
         }
     }
@@ -507,7 +600,7 @@ pub fn get_os_info() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_os_info() -> Result<serde_json::Value, String> {
     let product_name = Command::new("sw_vers")
         .arg("-productName")
@@ -550,12 +643,12 @@ pub fn get_os_info() -> Result<serde_json::Value, String> {
     }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_platform() -> &'static str {
     std::env::consts::OS
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_resources() -> Result<serde_json::Value, String> {
     let mut sys = get_system().lock().unwrap();
     sys.refresh_cpu_all();
@@ -582,7 +675,7 @@ pub fn get_resources() -> Result<serde_json::Value, String> {
     });
 
     let mut disks = get_disks().lock().unwrap();
-    disks.refresh_list();
+    disks.refresh(true);
     let disk_info: Vec<_> = disks
         .iter()
         .filter(|d| d.total_space() > 0)
@@ -637,7 +730,7 @@ mod tests {
         assert!(result.is_ok(), "get_resources failed: {:?}", result.err());
         let res = result.unwrap();
         let cpu = res["cpu"].as_f64().expect("cpu field should be a number");
-        assert!(cpu >= 0.0 && cpu <= 100.0, "cpu usage should be between 0 and 100, got {}", cpu);
+        assert!((0.0..=100.0).contains(&cpu), "cpu usage should be between 0 and 100, got {}", cpu);
         assert!(res["cpu_count"].as_u64().unwrap_or(0) > 0, "cpu_count should be > 0");
         assert!(!res["cpu_model"].as_str().unwrap_or("").is_empty(), "cpu_model should not be empty");
         assert!(res["memory"]["total"].as_u64().unwrap_or(0) > 0, "memory total should be > 0");

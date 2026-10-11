@@ -1,6 +1,6 @@
-import React from 'react'
 import { PageType } from '../types'
 import { NAVIGATION_ITEMS, APP_NAME, APP_SUBTITLE, APP_VERSION } from '../constants'
+import { usePackageManager } from '../hooks/usePlatform'
 
 interface SidebarProps {
   currentPage: PageType
@@ -8,6 +8,9 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentPage, onPageChange }: SidebarProps) {
+  const packageManager = usePackageManager()
+  const items = NAVIGATION_ITEMS.filter(item => !item.packageManagers || item.packageManagers.includes(packageManager))
+
   return (
     <aside className="w-64 h-full bg-gray-900 text-white flex flex-col border-r border-gray-800 shadow-lg">
       <div className="p-6 border-b border-gray-800">
@@ -15,8 +18,8 @@ export default function Sidebar({ currentPage, onPageChange }: SidebarProps) {
         <p className="text-gray-400 text-sm mt-1">{APP_SUBTITLE}</p>
       </div>
 
-      <nav className="flex-1 px-4 py-6 space-y-2">
-        {NAVIGATION_ITEMS.map(({ id, label, icon: Icon }) => (
+      <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+        {items.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => onPageChange(id)}

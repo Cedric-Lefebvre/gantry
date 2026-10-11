@@ -4,7 +4,7 @@ use std::process::Command;
 use std::fs;
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_processor_info() -> Result<serde_json::Value, String> {
     let content = fs::read_to_string("/proc/cpuinfo").map_err(|e| e.to_string())?;
 
@@ -71,7 +71,7 @@ pub fn get_processor_info() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_processor_info() -> Result<serde_json::Value, String> {
     let sysctl = |key: &str| -> String {
         Command::new("sysctl")
@@ -117,7 +117,7 @@ pub fn get_processor_info() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_devices() -> Result<serde_json::Value, String> {
     match Command::new("lsblk")
         .args(["-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,MODEL,VENDOR,FSTYPE,SERIAL,ROTA,TRAN"])
@@ -134,7 +134,7 @@ pub fn list_devices() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_devices() -> Result<serde_json::Value, String> {
     let out = Command::new("diskutil")
         .args(["list", "-plist"])
@@ -265,7 +265,7 @@ fn categorize_usb_device(name: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_usb_devices() -> Result<Vec<serde_json::Value>, String> {
     let output = match Command::new("lsusb").output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -315,7 +315,7 @@ pub fn list_usb_devices() -> Result<Vec<serde_json::Value>, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_usb_devices() -> Result<Vec<serde_json::Value>, String> {
     let out = Command::new("system_profiler")
         .args(["SPUSBDataType", "-json"])
@@ -374,7 +374,7 @@ fn categorize_network_device(name: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_network_devices() -> Result<Vec<serde_json::Value>, String> {
     let link_output = match Command::new("ip").args(["-d", "link", "show"]).output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -474,7 +474,7 @@ fn extract_ip_addresses_linux(addr_output: &str, device_name: &str) -> Vec<Strin
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_network_devices() -> Result<Vec<serde_json::Value>, String> {
     let out = Command::new("ifconfig")
         .arg("-a")
@@ -565,7 +565,7 @@ fn categorize_pci_device(category: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pci_devices() -> Result<Vec<serde_json::Value>, String> {
     let output = match Command::new("lspci").args(["-mm"]).output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -616,7 +616,7 @@ fn parse_lspci_mm_line(line: &str) -> Vec<String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pci_devices() -> Result<Vec<serde_json::Value>, String> {
     let out = Command::new("system_profiler")
         .args(["SPPCIDataType", "-json"])
@@ -660,7 +660,7 @@ fn categorize_input_device(name: &str, handlers: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_input_devices() -> Result<Vec<serde_json::Value>, String> {
     let mut devices = Vec::new();
 
@@ -706,7 +706,7 @@ pub fn list_input_devices() -> Result<Vec<serde_json::Value>, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_input_devices() -> Result<Vec<serde_json::Value>, String> {
     let out = Command::new("system_profiler")
         .args(["SPUSBDataType", "-json"])

@@ -70,6 +70,32 @@ jobs:
             -H "Authorization: Bearer $PACKAGECLOUD_TOKEN" \
             -F "file=@$DEB"
 
+  build-arch:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed git github-cli rust npm webkit2gtk-4.1 gtk3 librsvg
+
+      - uses: actions/checkout@v5
+
+      - name: Build pacman package
+        run: |
+          # makepkg refuses to run as root
+          useradd -m builder
+          chown -R builder .
+          cd packaging/arch
+          sudo -u builder makepkg --nodeps --noconfirm
+
+      - name: Attach package to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release upload "${{ github.event.inputs.tag || github.ref_name }}" packaging/arch/*.pkg.tar.zst --clobber
+
   build-macos:
     strategy:
       fail-fast: false

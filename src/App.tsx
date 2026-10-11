@@ -2,31 +2,34 @@ import { useState, useEffect, Suspense, lazy } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import './index.css'
 import Layout from './components/Layout'
-import Settings from './pages/Settings'
-import Devices from './pages/Devices'
-import Processes from './pages/Processes'
-import Repositories from './pages/Repositories'
-import StartupApps from './pages/StartupApps'
 import Resources from './pages/Resources'
-import Logs from './pages/Logs'
-import Scripts from './pages/Scripts'
-import { PageType, AppSettings, Platform } from './types'
+import { PageType, AppSettings, Platform, PackageManager } from './types'
 import { applyTheme } from './utils/theme'
 import { DEFAULT_PAGE } from './constants'
 import { ResourceMonitorContext, useResourceMonitorProvider } from './hooks/useResourceMonitor'
-import { PlatformContext } from './hooks/usePlatform'
+import { PlatformContext, PackageManagerContext } from './hooks/usePlatform'
 
 const Services = lazy(() => import('./pages/Services'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Devices = lazy(() => import('./pages/Devices'))
+const Processes = lazy(() => import('./pages/Processes'))
+const Repositories = lazy(() => import('./pages/Repositories'))
+const Packages = lazy(() => import('./pages/Packages'))
+const StartupApps = lazy(() => import('./pages/StartupApps'))
+const Logs = lazy(() => import('./pages/Logs'))
+const Scripts = lazy(() => import('./pages/Scripts'))
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>(DEFAULT_PAGE)
   const [themeLoaded, setThemeLoaded] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
+  const [packageManager, setPackageManager] = useState<PackageManager>('none')
   const monitorData = useResourceMonitorProvider()
 
   useEffect(() => {
     loadTheme()
     loadPlatform()
+    loadPackageManager()
   }, [])
 
   const loadTheme = async () => {
@@ -49,6 +52,14 @@ function App() {
     }
   }
 
+  const loadPackageManager = async () => {
+    try {
+      const pm = await invoke<PackageManager>('get_package_manager')
+      setPackageManager(pm)
+    } catch {
+    }
+  }
+
   const renderPage = () => {
     switch (currentPage) {
       case 'settings':
@@ -59,6 +70,8 @@ function App() {
         return <Processes />
       case 'repositories':
         return <Repositories />
+      case 'packages':
+        return <Packages />
       case 'startup':
         return <StartupApps />
       case 'resources':
@@ -102,11 +115,15 @@ function App() {
 
   return (
     <PlatformContext.Provider value={platform}>
-      <ResourceMonitorContext.Provider value={monitorData}>
-        <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
-          {renderPage()}
-        </Layout>
-      </ResourceMonitorContext.Provider>
+      <PackageManagerContext.Provider value={packageManager}>
+        <ResourceMonitorContext.Provider value={monitorData}>
+          <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
+            <Suspense fallback={<div className="p-4 text-gray-500 dark:text-gray-400">Loading...</div>}>
+              {renderPage()}
+            </Suspense>
+          </Layout>
+        </ResourceMonitorContext.Provider>
+      </PackageManagerContext.Provider>
     </PlatformContext.Provider>
   )
 }

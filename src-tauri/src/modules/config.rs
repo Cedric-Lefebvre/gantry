@@ -4,8 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+use super::pacman;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AptRepository {
+pub struct Repository {
     pub id: String,
     pub file_path: String,
     pub line_number: usize,
@@ -18,7 +21,7 @@ pub struct AptRepository {
 }
 
 #[cfg(target_os = "linux")]
-fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
+fn parse_sources_file(path: &PathBuf) -> Vec<Repository> {
     let mut repos = Vec::new();
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -27,7 +30,7 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
 
     let file_path = path.to_string_lossy().to_string();
 
-    if path.extension().map_or(false, |ext| ext == "sources") {
+    if path.extension().is_some_and(|ext| ext == "sources") {
         let mut current_enabled = true;
         let mut current_types = String::new();
         let mut current_uris = String::new();
@@ -40,7 +43,7 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
 
             if line_trimmed.is_empty() {
                 if !current_uris.is_empty() {
-                    repos.push(AptRepository {
+                    repos.push(Repository {
                         id: format!("{}:{}", file_path, start_line),
                         file_path: file_path.clone(),
                         line_number: start_line,
@@ -82,7 +85,7 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
         }
 
         if !current_uris.is_empty() {
-            repos.push(AptRepository {
+            repos.push(Repository {
                 id: format!("{}:{}", file_path, start_line),
                 file_path: file_path.clone(),
                 line_number: start_line,
@@ -126,7 +129,7 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
                     String::new()
                 };
 
-                repos.push(AptRepository {
+                repos.push(Repository {
                     id: format!("{}:{}", file_path, idx),
                     file_path: file_path.clone(),
                     line_number: idx,
@@ -145,9 +148,8 @@ fn parse_sources_file(path: &PathBuf) -> Vec<AptRepository> {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
-pub fn list_apt_repos() -> Result<serde_json::Value, String> {
-    let mut all_repos: Vec<AptRepository> = Vec::new();
+fn apt_list_repos() -> Result<serde_json::Value, String> {
+    let mut all_repos: Vec<Repository> = Vec::new();
 
     let base = PathBuf::from("/etc/apt/sources.list");
     if base.exists() {
@@ -170,8 +172,7 @@ pub fn list_apt_repos() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
-pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, String> {
+fn apt_toggle_repo(id: String, enabled: bool) -> Result<serde_json::Value, String> {
     let parts: Vec<&str> = id.rsplitn(2, ':').collect();
     if parts.len() != 2 {
         return Err("Invalid repository ID".to_string());
@@ -187,7 +188,7 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let lines: Vec<&str> = content.lines().collect();
-    let is_deb822 = path.extension().map_or(false, |ext| ext == "sources");
+    let is_deb822 = path.extension().is_some_and(|ext| ext == "sources");
 
     let new_content = if is_deb822 {
         let mut result_lines: Vec<String> = Vec::new();
@@ -260,27 +261,13 @@ pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, S
         result_lines.join("\n")
     };
 
-    let temp_file = std::env::temp_dir().join("apt_repo_temp");
-    fs::write(&temp_file, &new_content).map_err(|e| e.to_string())?;
-
-    let output = Command::new("pkexec")
-        .args(["cp", &temp_file.to_string_lossy(), file_path])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    let _ = fs::remove_file(&temp_file);
-
-    if output.status.success() {
-        Ok(json!({"success": true}))
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Failed to update repository: {}", stderr))
-    }
+    write_as_root(file_path, &new_content)
+        .map_err(|e| format!("Failed to update repository: {}", e))?;
+    Ok(json!({"success": true}))
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
-pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
+fn apt_add_repo(repo_line: String) -> Result<serde_json::Value, String> {
     let trimmed = repo_line.trim();
     if !trimmed.starts_with("deb ") && !trimmed.starts_with("deb-src ") {
         return Err("Repository line must start with 'deb' or 'deb-src'".to_string());
@@ -295,8 +282,7 @@ pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
     let sanitized: String = uri
         .replace("http://", "")
         .replace("https://", "")
-        .replace('/', "-")
-        .replace('.', "-")
+        .replace(['/', '.'], "-")
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-')
         .collect();
@@ -309,28 +295,13 @@ pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
         target = PathBuf::from("/etc/apt/sources.list.d").join(&filename);
     }
 
-    let content = format!("{}\n", trimmed);
-    let temp_file = std::env::temp_dir().join("apt_repo_add_temp");
-    fs::write(&temp_file, &content).map_err(|e| e.to_string())?;
-
-    let output = Command::new("pkexec")
-        .args(["cp", &temp_file.to_string_lossy(), &target.to_string_lossy()])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    let _ = fs::remove_file(&temp_file);
-
-    if output.status.success() {
-        Ok(json!({"success": true, "file": filename}))
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Failed to add repository: {}", stderr))
-    }
+    write_as_root(&target.to_string_lossy(), &format!("{}\n", trimmed))
+        .map_err(|e| format!("Failed to add repository: {}", e))?;
+    Ok(json!({"success": true, "file": filename}))
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
-pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
+fn apt_delete_repo(id: String) -> Result<serde_json::Value, String> {
     let parts: Vec<&str> = id.rsplitn(2, ':').collect();
     if parts.len() != 2 {
         return Err("Invalid repository ID".to_string());
@@ -346,7 +317,7 @@ pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let lines: Vec<&str> = content.lines().collect();
-    let is_deb822 = path.extension().map_or(false, |ext| ext == "sources");
+    let is_deb822 = path.extension().is_some_and(|ext| ext == "sources");
 
     let new_lines: Vec<&str> = if is_deb822 {
         let mut result: Vec<&str> = Vec::new();
@@ -387,23 +358,170 @@ pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
             return Err(format!("Failed to delete repository file: {}", stderr));
         }
     } else {
-        let temp_file = std::env::temp_dir().join("apt_repo_del_temp");
-        fs::write(&temp_file, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
-
-        let output = Command::new("pkexec")
-            .args(["cp", &temp_file.to_string_lossy(), file_path])
-            .output()
-            .map_err(|e| e.to_string())?;
-
-        let _ = fs::remove_file(&temp_file);
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to update repository file: {}", stderr));
-        }
+        write_as_root(file_path, &format!("{}\n", new_content))
+            .map_err(|e| format!("Failed to update repository file: {}", e))?;
     }
 
     Ok(json!({"success": true}))
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PackageManager {
+    Apt,
+    Pacman,
+}
+
+#[cfg(target_os = "linux")]
+fn package_manager_from_os_release(content: &str) -> Option<PackageManager> {
+    let ids: Vec<String> = content
+        .lines()
+        .filter_map(|line| line.strip_prefix("ID=").or_else(|| line.strip_prefix("ID_LIKE=")))
+        .flat_map(|value| value.trim().trim_matches('"').split_whitespace().map(str::to_lowercase).collect::<Vec<_>>())
+        .collect();
+
+    if ids.iter().any(|id| id == "arch") {
+        Some(PackageManager::Pacman)
+    } else if ids.iter().any(|id| id == "debian" || id == "ubuntu") {
+        Some(PackageManager::Apt)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_package_manager() -> Option<PackageManager> {
+    let from_os_release = fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|content| package_manager_from_os_release(&content));
+
+    from_os_release.or_else(|| {
+        if std::path::Path::new("/etc/apt").is_dir() {
+            Some(PackageManager::Apt)
+        } else if std::path::Path::new(pacman::PACMAN_CONF).is_file() {
+            Some(PackageManager::Pacman)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn get_package_manager() -> &'static str {
+    match detect_package_manager() {
+        Some(PackageManager::Apt) => "apt",
+        Some(PackageManager::Pacman) => "pacman",
+        None => "none",
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command(async)]
+pub fn get_package_manager() -> &'static str {
+    "homebrew"
+}
+
+#[cfg(target_os = "linux")]
+const NO_PACKAGE_MANAGER: &str = "No supported package manager found (APT or pacman)";
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn list_apt_repos() -> Result<serde_json::Value, String> {
+    match detect_package_manager() {
+        Some(PackageManager::Apt) => apt_list_repos(),
+        Some(PackageManager::Pacman) => Ok(json!(pacman::list_repos())),
+        None => Ok(json!([])),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn toggle_apt_repo(id: String, enabled: bool) -> Result<serde_json::Value, String> {
+    match detect_package_manager() {
+        Some(PackageManager::Apt) => apt_toggle_repo(id, enabled),
+        Some(PackageManager::Pacman) => {
+            let (path, line_number) = pacman::resolve_id(&id)?;
+            let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let new_content = pacman::set_enabled(&content, line_number, enabled)?;
+            write_as_root(&path, &new_content)
+                .map_err(|e| format!("Failed to update repository: {}", e))?;
+            Ok(json!({"success": true}))
+        }
+        None => Err(NO_PACKAGE_MANAGER.to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
+    match detect_package_manager() {
+        Some(PackageManager::Apt) => apt_add_repo(repo_line),
+        Some(PackageManager::Pacman) => {
+            let existing: Vec<String> = pacman::list_repos().into_iter().map(|r| r.suites).collect();
+            let content = fs::read_to_string(pacman::PACMAN_CONF).map_err(|e| e.to_string())?;
+            let new_content = pacman::append_repo(&content, &repo_line, &existing)?;
+            write_as_root(pacman::PACMAN_CONF, &new_content)
+                .map_err(|e| format!("Failed to add repository: {}", e))?;
+            Ok(json!({"success": true, "file": pacman::PACMAN_CONF}))
+        }
+        None => Err(NO_PACKAGE_MANAGER.to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
+    match detect_package_manager() {
+        Some(PackageManager::Apt) => apt_delete_repo(id),
+        Some(PackageManager::Pacman) => {
+            let (path, line_number) = pacman::resolve_id(&id)?;
+            let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let new_content = pacman::remove_repo(&content, line_number)?;
+            write_as_root(&path, &new_content)
+                .map_err(|e| format!("Failed to update repository file: {}", e))?;
+            Ok(json!({"success": true}))
+        }
+        None => Err(NO_PACKAGE_MANAGER.to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_as_root(target: &str, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let temp_file = dirs::runtime_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("gantry-{}-{}.tmp", std::process::id(), nanos));
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .open(&temp_file)
+        .map_err(|e| e.to_string())?;
+    let written = file.write_all(content.as_bytes());
+    drop(file);
+
+    let output = written.and_then(|_| {
+        Command::new("pkexec")
+            .args(["cp", &temp_file.to_string_lossy(), target])
+            .output()
+    });
+
+    let _ = fs::remove_file(&temp_file);
+
+    let output = output.map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -417,7 +535,7 @@ fn find_brew() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_apt_repos() -> Result<serde_json::Value, String> {
     let brew = find_brew().ok_or_else(|| {
         "Homebrew not found. Install it from https://brew.sh".to_string()
@@ -469,13 +587,13 @@ pub fn list_apt_repos() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn toggle_apt_repo(_id: String, _enabled: bool) -> Result<serde_json::Value, String> {
     Err("Homebrew taps cannot be toggled. Use Remove to delete a tap.".to_string())
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
     let tap_name = repo_line.trim();
     if tap_name.is_empty() {
@@ -498,7 +616,7 @@ pub fn add_apt_repo(repo_line: String) -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
     let brew = find_brew().ok_or_else(|| "Homebrew not found".to_string())?;
 
@@ -516,53 +634,174 @@ pub fn delete_apt_repo(id: String) -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
-pub fn list_startup_apps() -> Result<serde_json::Value, String> {
-    let mut apps: Vec<serde_json::Value> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        let autostart = home.join(".config").join("autostart");
-        if autostart.exists() {
-            if let Ok(entries) = fs::read_dir(&autostart) {
-                for e in entries.flatten() {
-                    if let Ok(s) = fs::read_to_string(e.path()) {
-                        let mut name = None;
-                        let mut exec = None;
-                        let mut hidden = false;
-                        for line in s.lines() {
-                            if line.starts_with("Name=") {
-                                name = Some(line.trim_start_matches("Name=").to_string());
-                            }
-                            if line.starts_with("Exec=") {
-                                exec = Some(line.trim_start_matches("Exec=").to_string());
-                            }
-                            if line.starts_with("Hidden=") {
-                                hidden = line
-                                    .trim_start_matches("Hidden=")
-                                    .trim()
-                                    .eq_ignore_ascii_case("true");
-                            }
-                        }
-                        apps.push(json!({
-                            "file": e.path().file_name().map(|n| n.to_string_lossy().to_string()),
-                            "name": name,
-                            "exec": exec,
-                            "enabled": !hidden,
-                            "file_path": e.path().to_string_lossy().to_string()
-                        }));
-                    }
-                }
+const DESKTOP_ENTRY_GROUP: &str = "[Desktop Entry]";
+
+#[cfg(target_os = "linux")]
+struct DesktopEntry {
+    name: Option<String>,
+    exec: Option<String>,
+    hidden: bool,
+}
+
+/// Reads the keys of the main group only: desktop files can carry action
+/// groups with their own Name and Exec.
+#[cfg(target_os = "linux")]
+fn parse_desktop_entry(content: &str) -> DesktopEntry {
+    let mut entry = DesktopEntry { name: None, exec: None, hidden: false };
+    let mut in_main_group = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_main_group = line == DESKTOP_ENTRY_GROUP;
+        } else if in_main_group {
+            if let Some(value) = line.strip_prefix("Name=") {
+                entry.name = Some(value.to_string());
+            } else if let Some(value) = line.strip_prefix("Exec=") {
+                entry.exec = Some(value.to_string());
+            } else if let Some(value) = line.strip_prefix("Hidden=") {
+                entry.hidden = value.trim().eq_ignore_ascii_case("true");
             }
         }
     }
-    Ok(json!(apps))
+
+    entry
+}
+
+/// Sets a key of the main group, replacing its current value or adding it at
+/// the end of that group.
+#[cfg(target_os = "linux")]
+fn set_desktop_key(content: &str, key: &str, value: &str) -> String {
+    let prefix = format!("{}=", key);
+    let new_line = format!("{}{}", prefix, value);
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_main_group = false;
+    let mut insert_at: Option<usize> = None;
+    let mut replaced = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_main_group = trimmed == DESKTOP_ENTRY_GROUP;
+        } else if in_main_group && trimmed.starts_with(&prefix) {
+            if !replaced {
+                lines.push(new_line.clone());
+                replaced = true;
+            }
+            continue;
+        }
+        lines.push(line.to_string());
+        if in_main_group && !trimmed.is_empty() {
+            insert_at = Some(lines.len());
+        }
+    }
+
+    if !replaced {
+        match insert_at {
+            Some(index) => lines.insert(index, new_line),
+            None => {
+                lines.push(DESKTOP_ENTRY_GROUP.to_string());
+                lines.push(new_line);
+            }
+        }
+    }
+
+    let mut result = lines.join("\n");
+    result.push('\n');
+    result
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+fn user_autostart_dir() -> Result<PathBuf, String> {
+    dirs::config_dir()
+        .map(|config| config.join("autostart"))
+        .ok_or_else(|| "Cannot determine the configuration directory".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn system_autostart_dirs() -> Vec<PathBuf> {
+    let config_dirs = std::env::var("XDG_CONFIG_DIRS")
+        .ok()
+        .filter(|dirs| !dirs.is_empty())
+        .unwrap_or_else(|| "/etc/xdg".to_string());
+    config_dirs.split(':').filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("autostart")).collect()
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "desktop"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+#[cfg(target_os = "linux")]
+fn autostart_file_name(file: &str) -> Result<&str, String> {
+    let is_plain_name = !file.is_empty() && !file.contains('/') && file != "." && file != "..";
+    if is_plain_name {
+        Ok(file)
+    } else {
+        Err("Invalid desktop file name".to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn user_autostart_file(file: &str) -> Result<PathBuf, String> {
+    let path = user_autostart_dir()?.join(autostart_file_name(file)?);
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err("Desktop file not found".to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn list_startup_apps_in(user_dir: &std::path::Path, system_dirs: &[PathBuf]) -> Vec<serde_json::Value> {
+    let mut apps: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<std::ffi::OsString> = std::collections::HashSet::new();
+
+    // A user file takes precedence over the system-wide entry of the same name
+    let sources = std::iter::once((user_dir, false)).chain(system_dirs.iter().map(|dir| (dir.as_path(), true)));
+    for (dir, system) in sources {
+        for path in desktop_files(dir) {
+            let Some(file_name) = path.file_name().map(|n| n.to_os_string()) else { continue };
+            let Ok(content) = fs::read_to_string(&path) else { continue };
+            if !seen.insert(file_name.clone()) {
+                continue;
+            }
+            let entry = parse_desktop_entry(&content);
+            apps.push(json!({
+                "file": file_name.to_string_lossy(),
+                "name": entry.name,
+                "exec": entry.exec,
+                "enabled": !entry.hidden,
+                "file_path": path.to_string_lossy(),
+                "system": system,
+            }));
+        }
+    }
+
+    apps
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+pub fn list_startup_apps() -> Result<serde_json::Value, String> {
+    let user_dir = user_autostart_dir()?;
+    Ok(json!(list_startup_apps_in(&user_dir, &system_autostart_dirs())))
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
 pub fn add_startup_app(name: String, exec: String) -> Result<serde_json::Value, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let autostart = home.join(".config").join("autostart");
+    let autostart = user_autostart_dir()?;
     fs::create_dir_all(&autostart).map_err(|e| e.to_string())?;
 
     let sanitized: String = name
@@ -589,83 +828,54 @@ pub fn add_startup_app(name: String, exec: String) -> Result<serde_json::Value, 
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_startup_app(file: String, name: String, exec: String) -> Result<serde_json::Value, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let filepath = home.join(".config").join("autostart").join(&file);
-
-    if !filepath.exists() {
-        return Err("Desktop file not found".to_string());
-    }
+    let filepath = user_autostart_file(&file)?;
 
     let content = fs::read_to_string(&filepath).map_err(|e| e.to_string())?;
-    let new_content: String = content
-        .lines()
-        .map(|line| {
-            if line.starts_with("Name=") {
-                format!("Name={}", name)
-            } else if line.starts_with("Exec=") {
-                format!("Exec={}", exec)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let content = set_desktop_key(&content, "Name", &name);
+    let content = set_desktop_key(&content, "Exec", &exec);
 
-    fs::write(&filepath, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
+    fs::write(&filepath, content).map_err(|e| e.to_string())?;
     Ok(json!({"success": true}))
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_startup_app(file: String) -> Result<serde_json::Value, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let filepath = home.join(".config").join("autostart").join(&file);
-
-    if !filepath.exists() {
-        return Err("Desktop file not found".to_string());
-    }
-
+    let filepath = user_autostart_file(&file)?;
     fs::remove_file(&filepath).map_err(|e| e.to_string())?;
     Ok(json!({"success": true}))
 }
 
 #[cfg(target_os = "linux")]
-#[tauri::command]
+fn toggle_startup_app_in(
+    user_dir: &std::path::Path,
+    system_dirs: &[PathBuf],
+    file: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let file = autostart_file_name(file)?;
+    let user_file = user_dir.join(file);
+
+    // System-wide entries are not ours to edit: they are switched off with a
+    // user copy that overrides them.
+    let source = std::iter::once(user_file.clone())
+        .chain(system_dirs.iter().map(|dir| dir.join(file)))
+        .find(|path| path.exists())
+        .ok_or_else(|| "Desktop file not found".to_string())?;
+
+    let content = fs::read_to_string(&source).map_err(|e| e.to_string())?;
+    let content = set_desktop_key(&content, "Hidden", if enabled { "false" } else { "true" });
+
+    fs::create_dir_all(user_dir).map_err(|e| e.to_string())?;
+    fs::write(&user_file, content).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
 pub fn toggle_startup_app(file: String, enabled: bool) -> Result<serde_json::Value, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let filepath = home.join(".config").join("autostart").join(&file);
-
-    if !filepath.exists() {
-        return Err("Desktop file not found".to_string());
-    }
-
-    let content = fs::read_to_string(&filepath).map_err(|e| e.to_string())?;
-    let hidden_value = if enabled { "false" } else { "true" };
-    let mut found_hidden = false;
-
-    let new_lines: Vec<String> = content
-        .lines()
-        .map(|line| {
-            if line.starts_with("Hidden=") {
-                found_hidden = true;
-                format!("Hidden={}", hidden_value)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect();
-
-    let mut new_content = new_lines.join("\n");
-    if !found_hidden {
-        new_content.push_str(&format!("\nHidden={}", hidden_value));
-    }
-
-    fs::write(&filepath, format!("{}\n", new_content)).map_err(|e| e.to_string())?;
+    toggle_startup_app_in(&user_autostart_dir()?, &system_autostart_dirs(), &file, enabled)?;
     Ok(json!({"success": true}))
 }
 
@@ -675,7 +885,7 @@ fn launch_agents_dir() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_startup_apps() -> Result<serde_json::Value, String> {
     let dir = launch_agents_dir()
         .ok_or_else(|| "Cannot determine home directory".to_string())?;
@@ -729,7 +939,7 @@ pub fn list_startup_apps() -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_startup_app(name: String, exec: String) -> Result<serde_json::Value, String> {
     let dir = launch_agents_dir()
         .ok_or_else(|| "Cannot determine home directory".to_string())?;
@@ -767,7 +977,7 @@ pub fn add_startup_app(name: String, exec: String) -> Result<serde_json::Value, 
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_startup_app(file: String, name: String, exec: String) -> Result<serde_json::Value, String> {
     let dir = launch_agents_dir()
         .ok_or_else(|| "Cannot determine home directory".to_string())?;
@@ -808,7 +1018,7 @@ pub fn edit_startup_app(file: String, name: String, exec: String) -> Result<serd
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_startup_app(file: String) -> Result<serde_json::Value, String> {
     let dir = launch_agents_dir()
         .ok_or_else(|| "Cannot determine home directory".to_string())?;
@@ -825,7 +1035,7 @@ pub fn delete_startup_app(file: String) -> Result<serde_json::Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn toggle_startup_app(file: String, enabled: bool) -> Result<serde_json::Value, String> {
     let dir = launch_agents_dir()
         .ok_or_else(|| "Cannot determine home directory".to_string())?;
@@ -850,5 +1060,94 @@ pub fn toggle_startup_app(file: String, enabled: bool) -> Result<serde_json::Val
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("launchctl failed: {}", stderr))
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_package_manager_from_os_release() {
+        let cachyos = "NAME=\"CachyOS Linux\"\nID=cachyos\nID_LIKE=arch\n";
+        let arch = "NAME=\"Arch Linux\"\nID=arch\n";
+        let ubuntu = "NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\n";
+        let mint = "NAME=\"Linux Mint\"\nID=linuxmint\nID_LIKE=\"ubuntu debian\"\n";
+        let fedora = "NAME=\"Fedora Linux\"\nID=fedora\n";
+
+        assert_eq!(package_manager_from_os_release(cachyos), Some(PackageManager::Pacman));
+        assert_eq!(package_manager_from_os_release(arch), Some(PackageManager::Pacman));
+        assert_eq!(package_manager_from_os_release(ubuntu), Some(PackageManager::Apt));
+        assert_eq!(package_manager_from_os_release(mint), Some(PackageManager::Apt));
+        assert_eq!(package_manager_from_os_release(fedora), None);
+    }
+
+    const DESKTOP_FILE: &str = "[Desktop Entry]\nType=Application\nName=Flameshot\nName[fr]=Flameshot FR\nExec=flameshot\n\n[Desktop Action Capture]\nName=Take screenshot\nExec=flameshot gui\n";
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = super::super::paths::app_dir().join("autostart").join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_parse_desktop_entry_reads_main_group_only() {
+        let entry = parse_desktop_entry(DESKTOP_FILE);
+        assert_eq!(entry.name.as_deref(), Some("Flameshot"));
+        assert_eq!(entry.exec.as_deref(), Some("flameshot"));
+        assert!(!entry.hidden);
+    }
+
+    #[test]
+    fn test_set_desktop_key_stays_in_main_group() {
+        let hidden = set_desktop_key(DESKTOP_FILE, "Hidden", "true");
+        assert!(hidden.contains("Exec=flameshot\nHidden=true\n\n[Desktop Action Capture]"), "got: {}", hidden);
+        assert!(parse_desktop_entry(&hidden).hidden);
+
+        let shown = set_desktop_key(&hidden, "Hidden", "false");
+        assert_eq!(shown.matches("Hidden=").count(), 1);
+        assert!(!parse_desktop_entry(&shown).hidden);
+
+        let renamed = set_desktop_key(DESKTOP_FILE, "Name", "Screenshots");
+        assert!(renamed.contains("Name=Screenshots\nName[fr]=Flameshot FR"));
+        assert!(renamed.contains("Name=Take screenshot"), "action names must not be touched");
+    }
+
+    #[test]
+    fn test_startup_apps_merge_user_and_system_entries() {
+        let root = scratch("merge");
+        let (user, system) = (root.join("user"), root.join("system"));
+        fs::create_dir_all(&user).unwrap();
+        fs::create_dir_all(&system).unwrap();
+        fs::write(user.join("mine.desktop"), "[Desktop Entry]\nName=Mine\nExec=mine\n").unwrap();
+        fs::write(system.join("agent.desktop"), "[Desktop Entry]\nName=Agent\nExec=agent\n").unwrap();
+        fs::write(system.join("notes.txt"), "not a desktop file").unwrap();
+
+        let apps = list_startup_apps_in(&user, std::slice::from_ref(&system));
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0]["name"], "Mine");
+        assert_eq!(apps[0]["system"], false);
+        assert_eq!(apps[1]["name"], "Agent");
+        assert_eq!(apps[1]["system"], true);
+        assert_eq!(apps[1]["enabled"], true);
+
+        toggle_startup_app_in(&user, std::slice::from_ref(&system), "agent.desktop", false).unwrap();
+        let apps = list_startup_apps_in(&user, std::slice::from_ref(&system));
+        let agent = apps.iter().find(|a| a["file"] == "agent.desktop").unwrap();
+        assert_eq!(apps.len(), 2, "the override replaces the system entry in the list");
+        assert_eq!(agent["enabled"], false);
+        assert_eq!(agent["system"], false);
+        assert!(!fs::read_to_string(system.join("agent.desktop")).unwrap().contains("Hidden"), "system file is untouched");
+
+        assert!(toggle_startup_app_in(&user, std::slice::from_ref(&system), "../agent.desktop", true).is_err());
+        assert!(toggle_startup_app_in(&user, &[system], "missing.desktop", true).is_err());
+    }
+
+    #[test]
+    fn test_list_repos_returns_array() {
+        let result = list_apt_repos();
+        assert!(result.is_ok(), "list_apt_repos failed: {:?}", result.err());
+        assert!(result.unwrap().is_array(), "repositories should be an array");
     }
 }
